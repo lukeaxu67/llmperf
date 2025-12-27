@@ -1,0 +1,41 @@
+info: "默认示例任务"
+
+dataset:
+  source:
+    type: "jsonl"
+    name: "demo"
+    config:
+      path: "resource/demo.jsonl"
+      encoding: "utf-8"
+  iterator:
+    mutation_chain: ["identity"]
+    max_rounds: 1
+
+executors:
+  - id: "debug-001"
+    name: "Mock链路"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-001"
+
+  - id: "debug-002"
+    name: "Mock链路"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-001"
+    param:
+      temperature: 0.7
+      extra_body:
+        enable_thining: true
+
+  - id: "debug-003"
+    name: "Mock链路"
+    after: ["debug-001", "debug-002"]
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-001"
+    param:
+      max_tokens: 500

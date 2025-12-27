@@ -1,0 +1,44 @@
+[project]
+name = "llmperf"
+version = "0.1.0"
+description = "Unified benchmarking toolkit for large language model providers."
+authors = [{name = "rdg"}]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.1.0",
+    "fastapi>=0.105.0",
+    "typer>=0.12.3",
+    "uvicorn>=0.24.0",
+    "pyyaml>=6.0.0",
+    "jmespath>=1.0.1",
+    "SQLAlchemy>=2.0.0",
+    "pydantic>=2.6.0",
+    "httpx>=0.26.0",
+    "uvloop>=0.19.0; platform_system != 'Windows'",
+    "packaging>=20.9",
+    "requests",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+llmperf-run = "llmperf.cli.run:main"
+llmperf-analyze = "llmperf.cli.analyze:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=63", "wheel"]
+build-backend = "setuptools.build_meta"

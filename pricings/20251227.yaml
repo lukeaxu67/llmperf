@@ -1,0 +1,27 @@
+pricing:
+  - provider: openai
+    model: gpt-4o
+    unit: per_1m
+    input_price: 15.00
+    output_price: 60.00
+    cache_input_discount: 0.20
+    cache_output_discount: 0.00
+    currency: USD
+
+  - provider: openai
+    model: gpt-4o-mini
+    unit: per_1k
+    input_price: 0.15
+    output_price: 0.60
+    cache_input_discount: 0.00
+    cache_output_discount: 0.00
+    currency: USD
+
+  - provider: mock
+    model: mock-001
+    unit: per_1m
+    input_price: 15000.00
+    output_price: 60000.00
+    cache_input_discount: 0.20
+    cache_output_discount: 0.00
+    currency: CNY

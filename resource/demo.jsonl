@@ -1,0 +1,2 @@
+{"id":"demo-1","messages":[{"role":"user","content":"请用一句话介绍一下你自己。"}],"metadata":{"topic":"intro","lang":"zh"}}
+{"id":"demo-2","messages":[{"role":"user","content":"Summarize the following in one sentence: LLMPerf is a unified benchmarking toolkit for LLM providers."}],"metadata":{"topic":"summary","lang":"en"}}
