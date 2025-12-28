@@ -24,9 +24,5 @@ class RuntimeConfig(BaseModel):
 def load_runtime_config(overrides: Optional[dict] = None) -> RuntimeConfig:
     """
     Load runtime configuration.
-
-    This project does not use environment-variable overrides; callers should
-    pass explicit overrides when needed.
     """
     return RuntimeConfig.model_validate(overrides or {})
-

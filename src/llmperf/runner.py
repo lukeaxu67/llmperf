@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import Dict, Optional
 
@@ -69,20 +68,14 @@ class RunManager:
         rows: list[DatasetRow] = list(self.dataset)
 
         iterator_cfg = self.config.dataset.iterator or None
-        mutation_chain_steps = (
-            (iterator_cfg.mutation_chain or ["identity"]) if iterator_cfg else ["identity"]
-        )
+        mutation_chain_steps = (iterator_cfg.mutation_chain or ["identity"]) if iterator_cfg else ["identity"]
         max_total_seconds = iterator_cfg.max_total_seconds if iterator_cfg else None
         max_rounds = iterator_cfg.max_rounds if iterator_cfg else None
 
-        logger.info(
-            "Loaded dataset with %d cases",
-            len(self.dataset),
-        )
+        logger.info("Loaded dataset with %d cases", len(self.dataset))
 
         exec_meta: Dict[str, object] = {}
 
-        # Multi-process path: delegate executor execution to ProcessManager when enabled.
         manager = ProcessManager(
             self.run_id,
             self.config,
@@ -100,7 +93,7 @@ class RunManager:
         from .analysis import create_analysis
 
         export = create_analysis(
-            "excel",
+            "summary",
             {
                 "run_id": self.run_id,
                 "task_name": (self.config.info or "run"),

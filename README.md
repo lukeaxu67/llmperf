@@ -146,27 +146,11 @@ llmperf-analyze --type <分析类型> --config <所需的配置文件>
 
 目前内置类型：
 
-- [x]`summary`：按 `provider + model + request_params` 聚合的延迟/吞吐指标
-- [x]`excel`：基于指定 `run_id` 重放导出 Excel
+- [x]`summary`：基于指定 `run_id` 重放导出 Excel
 
-### 1) summary 示例
+### summary 示例
 
 新建 `summary.yaml`：
-
-```yaml
-query:
-  run_ids: ["<RUN_ID>"]
-```
-
-运行：
-
-```bash
-llmperf-analyze --type summary --config summary.yaml
-```
-
-### 2) excel示例
-
-新建 `excel.yaml`：
 
 ```yaml
 task_name: "任务导出"
@@ -176,7 +160,7 @@ run_id: "<RUN_ID>"
 运行：
 
 ```bash
-llmperf-analyze --type excel --config excel.yaml
+llmperf-analyze --type summary --config summary.yaml
 ```
 
 会输出 `output_path`（生成的 xlsx 文件路径）。

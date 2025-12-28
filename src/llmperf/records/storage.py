@@ -4,9 +4,10 @@ import threading
 import time
 from typing import Iterable, Optional
 
-from ..config.models import RunConfig
-from ..records.model import RunRecord
 from .db import Database, ExecutionORM, RunORM, dumps, loads
+
+from llmperf.config.models import RunConfig
+from llmperf.records.model import RunRecord
 
 
 class Storage:
@@ -74,10 +75,7 @@ class Storage:
     def fetch_run_records(self, run_id: str) -> Iterable[RunRecord]:
         with self.db.session() as session:
             rows = (
-                session.query(ExecutionORM)
-                .filter(ExecutionORM.run_id == run_id)
-                .order_by(ExecutionORM.id.asc())
-                .all()
+                session.query(ExecutionORM).filter(ExecutionORM.run_id == run_id).order_by(ExecutionORM.id.asc()).all()
             )
             for row in rows:
                 yield RunRecord(

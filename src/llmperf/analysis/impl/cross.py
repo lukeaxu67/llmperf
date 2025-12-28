@@ -5,36 +5,21 @@ from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
-from ..records.model import RunRecord
-from .base import BaseAnalysis, Query, register_analysis
+from ..base_analysis import BaseAnalysis
+from ..record_query import RecordQuery
+from ..analysis_registry import register_analysis
+from ..utils import _percentile, _params_key
+
+from llmperf.records.model import RunRecord
 
 
-def _params_key(params: dict) -> str:
-    import json
+@register_analysis("cross")
+class CrossAnalysis(BaseAnalysis["CrossAnalysis.Config"]):
 
-    return json.dumps(params or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    config: Config
 
-
-def _percentile(values: list[float], pct: float) -> float:
-    if not values:
-        return 0.0
-    if len(values) == 1:
-        return float(values[0])
-    values_sorted = sorted(values)
-    k = (len(values_sorted) - 1) * pct
-    f = int(k)
-    c = min(f + 1, len(values_sorted) - 1)
-    if f == c:
-        return float(values_sorted[int(k)])
-    d0 = values_sorted[f] * (c - k)
-    d1 = values_sorted[c] * (k - f)
-    return float(d0 + d1)
-
-
-@register_analysis("summary")
-class SummaryAnalysis(BaseAnalysis["SummaryAnalysis.Config"]):
     class Config(BaseModel):
-        query: Query = Field(default_factory=Query)
+        query: RecordQuery = Field(default_factory=RecordQuery)
         group_by_request_params: bool = True
 
     def run(self) -> Dict[str, Any]:

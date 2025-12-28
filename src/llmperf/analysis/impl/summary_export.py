@@ -1,59 +1,21 @@
 from __future__ import annotations
 
-import json
-import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field
+import pandas as pd
+import openpyxl  # noqa: F401
+from openpyxl.utils import get_column_letter
 
-from ..records.model import RunRecord, field_aliases
-from ..records.storage import Storage
-from .base import BaseAnalysis, Query, register_analysis
+from ..base_analysis import BaseAnalysis
+from ..record_query import RecordQuery
+from ..analysis_registry import register_analysis
+from ..utils import _params_key, _safe_filename, _group_key, _percentile
 
-
-def _require_excel_deps() -> None:
-    try:
-        import pandas as pd  # noqa: F401
-        import openpyxl  # noqa: F401
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "Excel export requires `pandas` + `openpyxl` (and numpy). "
-            "Install them then re-run."
-        ) from exc
-
-
-def _safe_filename(name: str) -> str:
-    value = (name or "run").strip()
-    value = re.sub(r"[<>:\"/\\\\|?*]+", "_", value)
-    value = re.sub(r"\\s+", " ", value).strip()
-    return value or "run"
-
-
-def _params_key(params: Dict[str, Any]) -> str:
-    return json.dumps(params or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _group_key(record: RunRecord) -> Tuple[str, str, str]:
-    return (record.provider, record.model, _params_key(record.request_params))
-
-
-def _percentile(values: List[float], pct: float) -> float:
-    if not values:
-        return 0.0
-    if len(values) == 1:
-        return float(values[0])
-    values_sorted = sorted(values)
-    k = (len(values_sorted) - 1) * pct
-    f = int(k)
-    c = min(f + 1, len(values_sorted) - 1)
-    if f == c:
-        return float(values_sorted[int(k)])
-    d0 = values_sorted[f] * (c - k)
-    d1 = values_sorted[c] * (k - f)
-    return float(d0 + d1)
+from llmperf.records.model import RunRecord, field_aliases
 
 
 def _summary_for_records(items: List[RunRecord]) -> Dict[str, Any]:
@@ -113,19 +75,18 @@ _AGGREGATE_ALIASES: Dict[str, str] = {
 }
 
 
-@register_analysis("excel")
-class ExcelExportAnalysis(BaseAnalysis["ExcelExportAnalysis.Config"]):
+@register_analysis("summary")
+class SummaryExportAnalysis(BaseAnalysis["SummaryExportAnalysis.Config"]):
+
+    config: Config
+
     class Config(BaseModel):
         run_id: str = Field(min_length=1)
         task_name: str = "run"
         output_dir: str = "."
-        query: Query = Field(default_factory=Query)
+        query: RecordQuery = Field(default_factory=RecordQuery)
 
     def run(self) -> Dict[str, Any]:
-        _require_excel_deps()
-        import pandas as pd
-        from openpyxl.utils import get_column_letter
-
         storage = self.config.query.storage()
         records = list(storage.fetch_run_records(self.config.run_id))
 
@@ -149,6 +110,7 @@ class ExcelExportAnalysis(BaseAnalysis["ExcelExportAnalysis.Config"]):
             summary_rows.append(row)
 
         summary_df = pd.DataFrame(summary_rows)
+
         detail_dfs: List[Tuple[str, "pd.DataFrame"]] = []
         for idx, ((provider, model, params_json), items) in enumerate(grouped.items(), start=1):
             sheet_name = f"{provider}.{model}.{idx}"
@@ -191,4 +153,3 @@ class ExcelExportAnalysis(BaseAnalysis["ExcelExportAnalysis.Config"]):
                             cell.number_format = "0.00"
 
         return {"output_path": str(out_path)}
-
