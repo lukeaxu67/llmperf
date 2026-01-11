@@ -149,6 +149,8 @@ llmperf-analyze --type <分析类型> --config <所需的配置文件>
 目前内置类型：
 
 - [x]`summary`：基于指定 `run_id` 重放导出 Excel
+- [x]`history`：查看历史任务（按 run 展开 provider/model/params 的条数、成功/失败与成本，并给出时间范围）
+- [x]`export`：导出 run 的执行结果为 JSONL（每行一个 `TestCase`，追加 assistant 回复；可用 `dataset_path` 覆盖数据集路径）
 
 ### summary 示例
 

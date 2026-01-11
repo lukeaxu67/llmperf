@@ -38,9 +38,9 @@ class TestCase(BaseModel):
         return normalized
 
     @model_validator(mode="after")
-    def _ensure_trailing_assistant(self) -> "TestCase":
+    def _ensure_last_message_role(self) -> "TestCase":
         if not self.messages:
             raise ValueError("TestCase requires at least one message.")
-        if self.messages[-1].role != "user":
-            raise ValueError("The final message must have role 'user'.")
+        if self.messages[-1].role not in ("user", "assistant"):
+            raise ValueError("The final message must have role 'user' or 'assistant'.")
         return self
