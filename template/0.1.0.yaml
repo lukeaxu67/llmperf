@@ -18,6 +18,8 @@ executors:
     impl: "chat"
     concurrency: 1
     model: "mock-001"
+    rate:
+      interval_seconds: 10
 
   - id: "debug-002"
     name: "Mock链路"

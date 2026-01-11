@@ -10,6 +10,7 @@ from ..datasets.types import TestCase as DatasetRow
 from ..pricing.catalog import PriceCatalog
 from ..records.model import RunRecord
 from ..records.storage import Storage
+from ..utils.rate_limiter import RateLimiter
 from ..utils.registry import DoubleRegistry, registration_decorator
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,12 @@ class BaseExecutor:
         rows_per_round: int | None = None,
         exec_meta: Dict[str, object] | None = None,
     ) -> List[RunRecord]:
+        rate_cfg = self.config.rate
+        limiter = RateLimiter(
+            qps=(rate_cfg.qps if rate_cfg else None),
+            interval_seconds=(rate_cfg.interval_seconds if rate_cfg else None),
+        )
+
         start_ts = time.time()
 
         if max_total_seconds is not None:
@@ -101,6 +108,9 @@ class BaseExecutor:
                 try:
                     row = next(iterator)
                 except StopIteration:
+                    return False
+                limiter.acquire()
+                if not _can_dispatch_more():
                     return False
                 row_meta = dict(meta_base)
                 row_meta["row_index"] = row_index

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, AliasChoices
 
 
 class DatasetIteratorOptions(BaseModel):
@@ -22,7 +22,19 @@ class DatasetConfig(BaseModel):
     iterator: Optional[DatasetIteratorOptions] = None
 
 
+class RateConfig(BaseModel):
+    qps: float | None = Field(None, gt=0)
+    interval_seconds: float | None = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_oneof(self) -> "ExecutorConfig.RateConfig":
+        if self.qps is not None and self.interval_seconds is not None:
+            raise ValueError("Specify only one of qps or interval_seconds")
+        return self
+
+
 class ExecutorConfig(BaseModel):
+
     id: str
     name: str
     type: str
@@ -33,6 +45,7 @@ class ExecutorConfig(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     param: Dict[str, Any] = Field(default_factory=dict)
+    rate: RateConfig | None = Field(default=None, validation_alias=AliasChoices("rate", "limiter"))
 
 
 class PricingEntry(BaseModel):
