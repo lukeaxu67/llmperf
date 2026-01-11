@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 from ..config.models import ExecutorConfig
 from ..datasets.types import TestCase as DatasetRow

@@ -21,8 +21,8 @@ def _run_executor_in_subprocess(
     run_id: str,
     rows: List[DatasetRow],
     iterator_steps: List[str],
-    iterator_max_total_seconds: Optional[float],
-    iterator_max_rounds: Optional[int],
+    max_total_seconds: Optional[float],
+    max_rounds: Optional[int],
     pricing_data: List[dict],
     db_path: str,
     deadline_ts: Optional[float],
@@ -43,8 +43,6 @@ def _run_executor_in_subprocess(
     iterator = DatasetIterator(
         rows,
         mutation_chain=mutation_chain,
-        max_rounds=iterator_max_rounds,
-        max_total_seconds=iterator_max_total_seconds,
     )
     executor.run(
         run_id,
@@ -53,6 +51,9 @@ def _run_executor_in_subprocess(
         price_catalog,
         deadline_ts=deadline_ts,
         max_rows=max_rows,
+        max_total_seconds=max_total_seconds,
+        max_rounds=max_rounds,
+        rows_per_round=len(rows),
         exec_meta=exec_meta,
     )
     logger.info("[child %s] finished executor %s", run_id, config.id)
@@ -66,8 +67,8 @@ class ProcessManager:
     config: RunConfig
     rows: Sequence[DatasetRow]
     iterator_steps: List[str]
-    iterator_max_total_seconds: Optional[float] = None
-    iterator_max_rounds: Optional[int] = None
+    max_total_seconds: Optional[float] = None
+    max_rounds: Optional[int] = None
     db_path: str = "data.db"
     deadline_ts: Optional[float] = None
     max_rows: Optional[int] = None
@@ -129,8 +130,8 @@ class ProcessManager:
                             self.run_id,
                             rows_copy,
                             list(self.iterator_steps),
-                            self.iterator_max_total_seconds,
-                            self.iterator_max_rounds,
+                            self.max_total_seconds,
+                            self.max_rounds,
                             pricing_data,
                             self.db_path,
                             self.deadline_ts,

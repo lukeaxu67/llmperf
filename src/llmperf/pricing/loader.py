@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List
+from typing import List
 
 import yaml
 
@@ -26,4 +26,3 @@ def load_pricing_entries(path: str | Path) -> List[PricingEntry]:
 
 def read_text(path: str | Path) -> str:
     return Path(path).expanduser().read_text(encoding="utf-8")
-

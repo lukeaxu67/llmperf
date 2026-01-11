@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
-from sqlalchemy import Column, Float, Integer, String, Text, create_engine, text
+from sqlalchemy import Float, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -85,6 +85,9 @@ class Database:
 
     def session(self) -> Session:
         return self.Session()
+
+    def close(self) -> None:
+        self.engine.dispose()
 
     def has_legacy_responses_column(self) -> bool:
         return self._legacy_responses_column

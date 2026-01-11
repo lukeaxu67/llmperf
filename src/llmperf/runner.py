@@ -71,6 +71,8 @@ class RunManager:
         mutation_chain_steps = (iterator_cfg.mutation_chain or ["identity"]) if iterator_cfg else ["identity"]
         max_total_seconds = iterator_cfg.max_total_seconds if iterator_cfg else None
         max_rounds = iterator_cfg.max_rounds if iterator_cfg else None
+        if max_rounds is None:
+            max_rounds = 1
 
         logger.info("Loaded dataset with %d cases", len(self.dataset))
 
@@ -81,8 +83,8 @@ class RunManager:
             self.config,
             rows,
             iterator_steps=mutation_chain_steps,
-            iterator_max_total_seconds=max_total_seconds,
-            iterator_max_rounds=max_rounds,
+            max_total_seconds=max_total_seconds,
+            max_rounds=max_rounds,
             db_path=self.db_path,
             deadline_ts=None,
             max_rows=None,

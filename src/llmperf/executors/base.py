@@ -36,8 +36,29 @@ class BaseExecutor:
         price: PriceCatalog | None = None,
         deadline_ts: float | None = None,
         max_rows: int | None = None,
+        max_total_seconds: float | None = None,
+        max_rounds: int | None = None,
+        rows_per_round: int | None = None,
         exec_meta: Dict[str, object] | None = None,
     ) -> List[RunRecord]:
+        start_ts = time.time()
+
+        if max_total_seconds is not None:
+            seconds_deadline = start_ts + float(max_total_seconds)
+            if deadline_ts is None:
+                deadline_ts = seconds_deadline
+            else:
+                deadline_ts = min(deadline_ts, seconds_deadline)
+
+        if max_rounds is not None:
+            if rows_per_round is None:
+                raise ValueError("rows_per_round is required when max_rounds is set")
+            rounds_max_rows = int(rows_per_round) * int(max_rounds)
+            if max_rows is None:
+                max_rows = rounds_max_rows
+            else:
+                max_rows = min(int(max_rows), rounds_max_rows)
+
         total_rows: Optional[int]
         if hasattr(dataset, "__len__"):
             try:
@@ -46,6 +67,8 @@ class BaseExecutor:
                 total_rows = None
         else:
             total_rows = None
+        if total_rows is None and max_rows is not None:
+            total_rows = int(max_rows)
         if total_rows is not None:
             logger.info("Executor %s starting with %d rows", self.config.id, total_rows)
         else:
@@ -55,7 +78,6 @@ class BaseExecutor:
         max_workers = max(1, self.config.concurrency)
         meta_base = dict(exec_meta or {})
 
-        start_ts = time.time()
         next_progress = 0.1
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_meta: Dict[concurrent.futures.Future[RunRecord], Dict[str, object]] = {}

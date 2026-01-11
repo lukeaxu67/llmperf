@@ -2,7 +2,7 @@
 
 LLMPerf 是一个以 **YAML 配置** 驱动的 LLM 性能评测工具，支持：
 
-- 数据集：`DatasetSource`（JSONL / 生成器等）+ `DatasetIterator`（轮数 / 时间控制 + 变异链）
+- 数据集：`DatasetSource`（JSONL / 生成器等）+ `DatasetIterator`（变异链 + round/case index 标记；终止边界由 Executor 裁决）
 - 执行：多进程（按 executor 独立进程）+ 每个 executor 内并发
 - 记录：SQLite 持久化（每条调用记录包含请求参数、计费、时序片段等）
 - 产物：执行完成自动导出 Excel（汇总 + 明细分 sheet），也可通过分析命令重放导出
@@ -47,7 +47,7 @@ Excel 导出依赖：`numpy`、`pandas`、`openpyxl`（已在 `pyproject.toml` �
 - `info`：任务名称（也用于 Excel 文件命名）
 - `db_path`：可选，覆盖默认 DB 路径
 - `dataset.source`：数据集来源（例如 JSONL）
-- `dataset.iterator`：迭代器策略（轮数/时长/变换链）
+- `dataset.iterator`：iterator 策略（mutation_chain + 可选终止边界；终止判定由 Executor 执行）
 - `executors`：评测对象列表（同一任务内可以同 `provider+model` 但不同 `param`）
 - `pricing`：可留空，推荐走命令行 `--pricing-file` 注入
 
@@ -164,4 +164,3 @@ llmperf-analyze --type summary --config summary.yaml
 ```
 
 会输出 `output_path`（生成的 xlsx 文件路径）。
-

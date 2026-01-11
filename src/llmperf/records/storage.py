@@ -15,6 +15,9 @@ class Storage:
         self.db = Database(db_path)
         self._lock = threading.Lock()
 
+    def close(self) -> None:
+        self.db.close()
+
     def register_run(
         self,
         run_id: str,
