@@ -32,10 +32,14 @@ class MockProvider(BaseProvider):
         )
 
         accumulator = StreamAccumulator(record, debug=request.options.get("stream_debug"))
+
+        # 使用开始时间
+        base_time = now_ms()
+
         for idx, chunk in enumerate(response_text.split()):
-            ts = now_ms()
-            accumulator.append_content(chunk, ts_ms=ts, seq=idx)
-            time.sleep(0.01)
+            # 模拟每个chunk之间的延迟（增加时间戳差异）
+            chunk_time = base_time + (idx * 100) + 10  # 每个chunk间隔100ms
+            accumulator.append_content(chunk, ts_ms=chunk_time, seq=idx)
 
         prompt_text = "\n".join([msg.get("content", "") for msg in request.messages])
         record.qtokens = get_word_num(prompt_text)

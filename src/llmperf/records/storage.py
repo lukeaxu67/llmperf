@@ -105,6 +105,7 @@ class Storage:
                     reasoning=loads(row.reasoning_json, []),
                     content=loads(row.content_json, []),
                     extra=loads(row.extra_json, {}),
+                    created_at=row.created_at,
                 )
 
     def query_records(
@@ -150,4 +151,5 @@ class Storage:
                     reasoning=loads(row.reasoning_json, []),
                     content=loads(row.content_json, []),
                     extra=loads(row.extra_json, {}),
+                    created_at=row.created_at,
                 )

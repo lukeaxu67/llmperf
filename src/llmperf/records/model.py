@@ -43,6 +43,7 @@ class RunRecord:
     content: List[str] = field(default_factory=list)
     output_items: List[Dict[str, Any]] = field(default_factory=list)
     extra: Dict[str, Any] = field(default_factory=dict)
+    created_at: int = field(default_factory=lambda: int(time.time()))
 
     @aliased_property("首响(ms)")
     def first_resp_time(self) -> int:

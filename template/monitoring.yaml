@@ -1,0 +1,43 @@
+# Continuous Monitoring Configuration
+# 用于长期持续监控的配置示例（每分钟一次请求）
+
+info: "24小时持续监控 - OpenAI GPT-4o"
+
+# 数据集配置 - 使用简单的问题生成器
+dataset:
+  source:
+    type: "generator"
+    name: "simple_questions"
+    config:
+      generator:
+        class_name: "simple_questions"
+        parameters:
+          count: 1  # 每次运行只请求1次
+  iterator:
+    mutation_chain: ["identity"]
+    max_total_seconds: 86400  # 24小时 = 86400秒
+
+# 执行器配置
+executors:
+  - id: "openai-gpt4o-monitor"
+    name: "OpenAI GPT-4o 监控"
+    type: "openai"
+    impl: "chat"
+    concurrency: 1
+    model: "gpt-4o"
+    param:
+      max_tokens: 400
+      temperature: 0.7
+    rate:
+      interval_seconds: 60  # 每60秒执行一次
+
+# 价格配置（可选）
+pricing:
+  - provider: openai
+    model: gpt-4o
+    unit: per_1m
+    input_price: 2.50
+    output_price: 10.00
+    cache_input_discount: 0.00
+    cache_output_discount: 0.00
+    currency: USD

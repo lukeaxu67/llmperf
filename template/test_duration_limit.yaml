@@ -1,0 +1,10 @@
+type: stability
+query:
+  run_ids:
+    - "e669818d3623426fbc162603a488a4ad"
+  max_duration_hours: 0.01  # 只分析最近 0.01 小时（36秒）
+segment_size: 6
+window_minutes: 5
+step_minutes: 5
+outlier_threshold: 2.0
+z_score_threshold: 2.0

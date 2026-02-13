@@ -1,0 +1,9 @@
+type: stability
+query:
+  run_ids:
+    - "8bec191d39de4751a07af12688c9b4e0"
+segment_size: 6
+window_minutes: 5
+step_minutes: 5
+outlier_threshold: 2.0
+z_score_threshold: 2.0

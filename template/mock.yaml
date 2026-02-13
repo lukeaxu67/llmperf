@@ -1,0 +1,27 @@
+# Mock Provider 测试配置
+# 每秒执行一次，执行1分钟
+
+info: "Mock测试 - 每秒一次，1分钟"
+
+dataset:
+  source:
+    type: "generator"
+    name: "simple_questions"
+    config:
+      generator:
+        class_name: "simple_questions"
+        parameters:
+          count: 60  # 生成60个问题，够1分钟每秒执行
+  iterator:
+    mutation_chain: ["identity"]
+    # max_total_seconds: 60  # 注意：当前数据集会被转为list，此参数在executor级别不生效
+
+executors:
+  - id: "mock-test"
+    name: "Mock测试"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-001"
+    rate:
+      interval_seconds: 1  # 每秒执行一次

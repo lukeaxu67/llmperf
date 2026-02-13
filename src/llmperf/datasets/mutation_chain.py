@@ -1,3 +1,5 @@
+import random
+import string
 from typing import Callable, Dict, Iterable
 from .types import TestCase
 from .mutation_context import MutationContext
@@ -15,6 +17,21 @@ def identity(case: TestCase, ctx: MutationContext) -> TestCase:
 
 
 register_step("identity", identity)
+
+
+def rdmprefix(case: TestCase, ctx: MutationContext) -> TestCase:
+    """在问题前面添加 IGNORE-THIS 前缀来干扰模型"""
+    mutated = case.model_copy(deep=True)
+    # 生成随机的8位前缀
+    random_prefix = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+    # 在最后一条消息前添加前缀
+    last_message = mutated.messages[-1]
+    prefix = f"IGNORE-THIS:{random_prefix}. Pay attention to my question. My question is: "
+    last_message.content = prefix + last_message.content
+    return mutated
+
+
+register_step("rdmprefix", rdmprefix)
 
 
 class MutationChain:

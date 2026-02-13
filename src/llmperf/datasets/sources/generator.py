@@ -4,12 +4,14 @@ from typing import Any, Dict, List, Mapping, Type
 
 from ..generators.base_generator import BaseGenerator
 from ..generators.novel_slice_summary_generator import NovelSliceSummaryGenerator
+from ..generators.simple_questions_generator import SimpleQuestionsGenerator
 from ..dataset_source import DatasetSource
 from ..dataset_source_registry import register_source
 from ..types import TestCase
 
 _GENERATOR_TYPES: Dict[str, Type[BaseGenerator]] = {
     "novel_slice_summary": NovelSliceSummaryGenerator,
+    "simple_questions": SimpleQuestionsGenerator,
 }
 
 

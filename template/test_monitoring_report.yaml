@@ -1,0 +1,7 @@
+type: monitoring_report
+query:
+  run_ids:
+    - "8bec191d39de4751a07af12688c9b4e0"
+output_dir: "./reports"
+report_name: "test_monitoring"
+include_html: true

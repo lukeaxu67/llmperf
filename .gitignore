@@ -27,3 +27,5 @@ specs/
 *.swp
 .vscode/
 .idea/
+
+reports/
