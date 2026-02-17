@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 from .db import Database, ExecutionORM, RunORM, dumps, loads
 
@@ -153,3 +153,30 @@ class Storage:
                     extra=loads(row.extra_json, {}),
                     created_at=row.created_at,
                 )
+
+    def list_runs(self, limit: int = 20) -> List[dict]:
+        """List all runs from the database.
+
+        Args:
+            limit: Maximum number of runs to return.
+
+        Returns:
+            List of run dictionaries.
+        """
+        with self.db.session() as session:
+            rows = (
+                session.query(RunORM)
+                .order_by(RunORM.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "run_id": row.id,
+                    "task_type": row.task_type,
+                    "info": row.info,
+                    "created_at": row.created_at,
+                    "config_path": row.config_path,
+                }
+                for row in rows
+            ]

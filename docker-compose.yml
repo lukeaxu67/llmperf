@@ -1,0 +1,126 @@
+# LLMPerf Docker Compose Configuration
+# All-in-one deployment with frontend and backend
+
+version: '3.8'
+
+services:
+  # Main LLMPerf application (Frontend + Backend)
+  llmperf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llmperf:latest
+    container_name: llmperf
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist database
+      - llmperf_data:/data
+      # Persist logs
+      - llmperf_logs:/app/logs
+      # Resource files (datasets, etc.)
+      - ./resource:/app/resource:ro
+      # Template files
+      - ./template:/app/template:ro
+    environment:
+      - LLMPerf_DB_PATH=/data/llmperf.db
+      - LLMPerf_LOG_DIR=/app/logs
+      - LLMPerf_LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - STATIC_DIR=/app/static
+      # API Keys (pass from .env or host environment)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - IFLYTEK_API_KEY=${IFLYTEK_API_KEY:-}
+      - HUOSHAN_API_KEY=${HUOSHAN_API_KEY:-}
+      # Notification settings
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+    networks:
+      - llmperf_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Redis for future caching and task queue
+  redis:
+    image: redis:7-alpine
+    container_name: llmperf_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - llmperf_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    profiles:
+      - full
+
+  # Optional: Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: llmperf_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - llmperf_network
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: llmperf_grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - llmperf_network
+    profiles:
+      - monitoring
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+networks:
+  llmperf_network:
+    driver: bridge
+
+volumes:
+  llmperf_data:
+    driver: local
+  llmperf_logs:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

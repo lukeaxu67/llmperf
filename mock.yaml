@@ -1,0 +1,33 @@
+info: "每分钟1次持续24小时"
+
+dataset:
+  source:
+    type: "generator"
+    name: "simple_questions"
+    config:
+      generator:
+        class_name: "simple_questions"
+        parameters:
+          count: 1
+  iterator:
+    mutation_chain: ["rdmprefix"]
+    max_total_seconds: 86400
+    max_rounds: 1440
+
+executors:
+  - id: "qwen3-max"
+    name: "Qwen3 Max"
+    type: "qianwen"
+    impl: "chat"
+    concurrency: 1
+    model: "qwen3-max-2026-01-23"
+    api_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: "sk-7a510f2ce42242d7b5f16ec755a1cfc9"
+    param:
+      extra_body:
+        max_tokens: 200
+        enable_thinking: true
+        thinking_budget: 100
+        temperature: 1.0
+    rate:
+      interval_seconds: 60  # 每秒执行一次

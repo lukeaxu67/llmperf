@@ -29,3 +29,4 @@ specs/
 .idea/
 
 reports/
+node_modules/
