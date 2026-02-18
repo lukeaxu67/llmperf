@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Body
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ async def get_template(name: str):
     summary="Validate configuration",
     description="Validate a YAML configuration.",
 )
-async def validate_config(config_content: str):
+async def validate_config(config_content: str = Body(..., media_type="text/plain")):
     """Validate a YAML configuration."""
     errors = []
     warnings = []

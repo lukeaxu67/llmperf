@@ -361,7 +361,28 @@ class TaskService:
         Returns:
             TaskInfo if found, None otherwise.
         """
-        return self._tasks.get(run_id)
+        # First check memory
+        task_info = self._tasks.get(run_id)
+        if task_info:
+            return task_info
+
+        # If not in memory, try to load from database
+        try:
+            runs = self._storage.list_runs(limit=1000)
+            for run in runs:
+                if run.get("run_id") == run_id:
+                    return TaskInfo(
+                        run_id=run_id,
+                        status=TaskStatus.COMPLETED,
+                        config_path=run.get("config_path"),
+                        task_name=run.get("info", ""),
+                        created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
+                        completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
+                    )
+        except Exception as e:
+            logger.warning("Failed to load task from database: %s", e)
+
+        return None
 
     def get_progress(self, run_id: str) -> Optional[TaskProgress]:
         """Get task progress.
@@ -572,7 +593,7 @@ class TaskService:
         Returns:
             Quick report dictionary, or None if no data.
         """
-        task_info = self._tasks.get(run_id)
+        task_info = self.get_task(run_id)  # Use get_task to check both memory and database
         stats = self.get_stats(run_id)
 
         if not stats:

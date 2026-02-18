@@ -24,7 +24,22 @@ api.interceptors.response.use(
     return response.data
   },
   (error) => {
-    const message = error.response?.data?.detail || error.message || '请求失败'
+    let message = '请求失败'
+
+    if (error.response?.data?.detail) {
+      const detail = error.response.data.detail
+      // Handle FastAPI validation errors (array of error objects)
+      if (Array.isArray(detail)) {
+        message = detail.map((e: any) => e.msg || JSON.stringify(e)).join('; ')
+      } else if (typeof detail === 'string') {
+        message = detail
+      } else {
+        message = JSON.stringify(detail)
+      }
+    } else if (error.message) {
+      message = error.message
+    }
+
     return Promise.reject(new Error(message))
   }
 )
