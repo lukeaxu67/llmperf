@@ -10,7 +10,6 @@ import {
   Form,
   Input,
   Switch,
-  Select,
   message,
   Space,
   Divider,
@@ -48,7 +47,7 @@ export default function Settings() {
     }
   }
 
-  const handleSaveNotification = async (values: any) => {
+  const handleSaveNotification = async () => {
     message.success('通知设置已保存（功能开发中）')
   }
 

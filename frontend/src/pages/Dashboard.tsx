@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Row, Col, Card, Table, Typography, Space, Tag, Empty, Spin } from 'antd'
+import { Row, Col, Card, Table, Typography, Space, Tag, Empty, Spin, Statistic } from 'antd'
 import {
   RocketOutlined,
   CheckCircleOutlined,
@@ -7,11 +7,11 @@ import {
   DollarOutlined,
   ClockCircleOutlined,
 } from '@ant-design/icons'
-import { Line, Pie, Column } from '@ant-design/plots'
+import { Pie } from '@ant-design/plots'
 import dayjs from 'dayjs'
 import StatCard from '@/components/StatCard'
 import StatusTag from '@/components/StatusTag'
-import { taskApi, analysisApi, Task } from '@/services/api'
+import { taskApi, pricingApi, Task } from '@/services/api'
 
 const { Title, Text } = Typography
 
@@ -21,7 +21,7 @@ interface DashboardStats {
   completedTasks: number
   failedTasks: number
   totalCost: number
-  avgLatency: number
+  avgCostPerTask: number
 }
 
 export default function Dashboard() {
@@ -32,10 +32,9 @@ export default function Dashboard() {
     completedTasks: 0,
     failedTasks: 0,
     totalCost: 0,
-    avgLatency: 0,
+    avgCostPerTask: 0,
   })
   const [recentTasks, setRecentTasks] = useState<Task[]>([])
-  const [historyRuns, setHistoryRuns] = useState<any[]>([])
 
   useEffect(() => {
     fetchDashboardData()
@@ -44,8 +43,12 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true)
     try {
-      // Fetch tasks
-      const tasksRes = await taskApi.list({ limit: 100 }) as any
+      // Fetch tasks and total cost in parallel
+      const [tasksRes, costRes] = await Promise.all([
+        taskApi.list({ limit: 100 }) as any,
+        pricingApi.getTotalCost() as any,
+      ])
+
       const tasks = tasksRes.tasks || []
       setRecentTasks(tasks.slice(0, 5))
 
@@ -53,23 +56,17 @@ export default function Dashboard() {
       const runningTasks = tasks.filter((t: Task) => t.status === 'running').length
       const completedTasks = tasks.filter((t: Task) => t.status === 'completed').length
       const failedTasks = tasks.filter((t: Task) => t.status === 'failed').length
+      const totalCost = costRes?.total_cost || 0
+      const runCount = costRes?.run_count || tasks.length
 
       setStats({
         totalTasks: tasks.length,
         runningTasks,
         completedTasks,
         failedTasks,
-        totalCost: 0,
-        avgLatency: 0,
+        totalCost,
+        avgCostPerTask: runCount > 0 ? totalCost / runCount : 0,
       })
-
-      // Fetch history
-      try {
-        const historyRes = await analysisApi.getHistory({ limit: 30 }) as any
-        setHistoryRuns(historyRes.runs || [])
-      } catch (e) {
-        // Ignore history errors
-      }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error)
     } finally {
@@ -83,6 +80,11 @@ export default function Dashboard() {
       dataIndex: 'task_name',
       key: 'task_name',
       ellipsis: true,
+      render: (name: string, record: Task) => (
+        record.status === 'completed'
+          ? <a href={`/tasks/${record.run_id}`}>{name || '未命名任务'}</a>
+          : (name || '未命名任务')
+      ),
     },
     {
       title: 'Run ID',
@@ -149,7 +151,16 @@ export default function Dashboard() {
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
           <StatCard
-            title="总任务数"
+            title="累计总费用"
+            value={stats.totalCost.toFixed(4)}
+            prefix={<DollarOutlined />}
+            suffix="元"
+            color="#cf1322"
+          />
+        </Col>
+        <Col xs={24} sm={12} lg={6}>
+          <StatCard
+            title="任务总数"
             value={stats.totalTasks}
             prefix={<RocketOutlined />}
             color="#1677ff"
@@ -165,19 +176,56 @@ export default function Dashboard() {
         </Col>
         <Col xs={24} sm={12} lg={6}>
           <StatCard
-            title="已完成"
-            value={stats.completedTasks}
-            prefix={<CheckCircleOutlined />}
-            color="#52c41a"
+            title="平均任务费用"
+            value={stats.avgCostPerTask.toFixed(4)}
+            prefix="¥"
+            color="#722ed1"
           />
         </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="失败任务"
-            value={stats.failedTasks}
-            prefix={<CloseCircleOutlined />}
-            color="#ff4d4f"
-          />
+      </Row>
+
+      {/* Secondary Stats */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={12} sm={6}>
+          <Card size="small">
+            <Statistic
+              title="已完成"
+              value={stats.completedTasks}
+              valueStyle={{ color: '#52c41a', fontSize: 20 }}
+              prefix={<CheckCircleOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} sm={6}>
+          <Card size="small">
+            <Statistic
+              title="失败"
+              value={stats.failedTasks}
+              valueStyle={{ color: '#ff4d4f', fontSize: 20 }}
+              prefix={<CloseCircleOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12}>
+          <Card size="small" style={{ height: '100%' }}>
+            <Space size="large">
+              <a href="/tasks/create">
+                <Tag color="blue" style={{ padding: '8px 16px', fontSize: 14 }}>
+                  <RocketOutlined /> 创建任务
+                </Tag>
+              </a>
+              <a href="/pricing">
+                <Tag color="red" style={{ padding: '8px 16px', fontSize: 14 }}>
+                  <DollarOutlined /> 成本监控
+                </Tag>
+              </a>
+              <a href="/datasets">
+                <Tag color="green" style={{ padding: '8px 16px', fontSize: 14 }}>
+                  数据集管理
+                </Tag>
+              </a>
+            </Space>
+          </Card>
         </Col>
       </Row>
 
@@ -208,27 +256,6 @@ export default function Dashboard() {
           </Card>
         </Col>
       </Row>
-
-      {/* Quick Actions */}
-      <Card title="快捷操作" style={{ marginTop: 24 }}>
-        <Space size="large">
-          <a href="/tasks/create">
-            <Tag color="blue" style={{ padding: '8px 16px', fontSize: 14 }}>
-              <RocketOutlined /> 创建任务
-            </Tag>
-          </a>
-          <a href="/datasets">
-            <Tag color="green" style={{ padding: '8px 16px', fontSize: 14 }}>
-              <DollarOutlined /> 管理数据集
-            </Tag>
-          </a>
-          <a href="/analysis">
-            <Tag color="purple" style={{ padding: '8px 16px', fontSize: 14 }}>
-              <CheckCircleOutlined /> 查看分析
-            </Tag>
-          </a>
-        </Space>
-      </Card>
     </div>
   )
 }

@@ -14,15 +14,13 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from .routers import tasks, analysis, websocket, config, datasets
+from .routers import tasks, websocket, config, datasets, pricing
 from .services.task_service import TaskService
-from .services.analysis_service import AnalysisService
 
 logger = logging.getLogger(__name__)
 
 # Global service instances
 _task_service: Optional[TaskService] = None
-_analysis_service: Optional[AnalysisService] = None
 
 
 def get_task_service() -> TaskService:
@@ -33,14 +31,6 @@ def get_task_service() -> TaskService:
     return _task_service
 
 
-def get_analysis_service() -> AnalysisService:
-    """Get or create analysis service instance."""
-    global _analysis_service
-    if _analysis_service is None:
-        _analysis_service = AnalysisService()
-    return _analysis_service
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -49,7 +39,6 @@ async def lifespan(app: FastAPI):
 
     # Initialize services
     get_task_service()
-    get_analysis_service()
 
     # Import notification channels to register them
     try:
@@ -115,11 +104,6 @@ def create_app(
         tags=["tasks"],
     )
     app.include_router(
-        analysis.router,
-        prefix="/api/analysis",
-        tags=["analysis"],
-    )
-    app.include_router(
         websocket.router,
         prefix="/ws",
         tags=["websocket"],
@@ -133,6 +117,11 @@ def create_app(
         datasets.router,
         prefix="/api/datasets",
         tags=["datasets"],
+    )
+    app.include_router(
+        pricing.router,
+        prefix="/api/pricing",
+        tags=["pricing"],
     )
 
     # Health check endpoint

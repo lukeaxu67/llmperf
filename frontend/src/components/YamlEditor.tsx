@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import MonacoEditor from 'react-monaco-editor'
 import { Alert } from 'antd'
 
@@ -24,20 +24,20 @@ export default function YamlEditor({
     editor.focus()
   }
 
-  const options: monaco.editor.IStandaloneEditorConstructionOptions = {
+  const options = {
     selectOnLineNumbers: true,
     roundedSelection: false,
     readOnly,
-    cursorStyle: 'line',
+    cursorStyle: 'line' as const,
     automaticLayout: true,
     fontSize: 13,
-    lineNumbers: 'on',
+    lineNumbers: 'on' as const,
     scrollBeyondLastLine: false,
     minimap: { enabled: false },
     folding: true,
-    renderLineHighlight: 'all',
+    renderLineHighlight: 'all' as const,
     tabSize: 2,
-    wordWrap: 'on',
+    wordWrap: 'on' as const,
     theme: 'vs-light',
   }
 

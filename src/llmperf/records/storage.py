@@ -2,12 +2,42 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
-from .db import Database, ExecutionORM, RunORM, dumps, loads
+from .db import Database, ExecutionORM, PricingHistoryORM, RunORM, dumps, loads
 
 from llmperf.config.models import RunConfig
 from llmperf.records.model import RunRecord
+
+
+@dataclass
+class PricingRecord:
+    """Pricing record for a provider/model at a specific time."""
+    id: int
+    provider: str
+    model: str
+    input_price: float  # CNY per million tokens
+    output_price: float  # CNY per million tokens
+    cache_read_price: float = 0.0
+    cache_write_price: float = 0.0
+    effective_at: int = 0
+    created_at: int = 0
+    note: str = ""
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "provider": self.provider,
+            "model": self.model,
+            "input_price": self.input_price,
+            "output_price": self.output_price,
+            "cache_read_price": self.cache_read_price,
+            "cache_write_price": self.cache_write_price,
+            "effective_at": self.effective_at,
+            "created_at": self.created_at,
+            "note": self.note,
+        }
 
 
 class Storage:
@@ -177,6 +207,271 @@ class Storage:
                     "info": row.info,
                     "created_at": row.created_at,
                     "config_path": row.config_path,
+                    "total_cost": getattr(row, "total_cost", 0.0),
+                    "currency": getattr(row, "currency", "CNY"),
                 }
                 for row in rows
+            ]
+
+    def update_run_cost(self, run_id: str, total_cost: float, currency: str = "CNY") -> None:
+        """Update the total cost for a run."""
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if run:
+                run.total_cost = total_cost
+                run.currency = currency
+                session.commit()
+
+    def get_total_cost(self) -> dict:
+        """Get total cost across all runs."""
+        with self.db.session() as session:
+            # Sum from runs table
+            runs = session.query(RunORM).all()
+            total_cost = sum(getattr(r, "total_cost", 0.0) for r in runs)
+            run_count = len(runs)
+
+            # Also calculate from executions for accuracy
+            from sqlalchemy import func
+            exec_total = session.query(func.sum(ExecutionORM.total_cost)).scalar() or 0.0
+
+            return {
+                "total_cost": max(total_cost, exec_total),
+                "run_count": run_count,
+                "currency": "CNY",
+            }
+
+    # ==================== Pricing History Methods ====================
+
+    def add_pricing(
+        self,
+        provider: str,
+        model: str,
+        input_price: float,
+        output_price: float,
+        cache_read_price: float = 0.0,
+        cache_write_price: float = 0.0,
+        effective_at: Optional[int] = None,
+        note: str = "",
+    ) -> PricingRecord:
+        """Add a new pricing record."""
+        if effective_at is None:
+            effective_at = int(time.time())
+
+        with self.db.session() as session:
+            orm = PricingHistoryORM(
+                provider=provider,
+                model=model,
+                input_price=input_price,
+                output_price=output_price,
+                cache_read_price=cache_read_price,
+                cache_write_price=cache_write_price,
+                effective_at=effective_at,
+                created_at=int(time.time()),
+                note=note,
+            )
+            session.add(orm)
+            session.commit()
+            return PricingRecord(
+                id=orm.id,
+                provider=orm.provider,
+                model=orm.model,
+                input_price=orm.input_price,
+                output_price=orm.output_price,
+                cache_read_price=orm.cache_read_price,
+                cache_write_price=orm.cache_write_price,
+                effective_at=orm.effective_at,
+                created_at=orm.created_at,
+                note=orm.note,
+            )
+
+    def list_pricing(
+        self,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[PricingRecord]:
+        """List pricing records, optionally filtered by provider/model."""
+        with self.db.session() as session:
+            query = session.query(PricingHistoryORM)
+            if provider:
+                query = query.filter(PricingHistoryORM.provider == provider)
+            if model:
+                query = query.filter(PricingHistoryORM.model == model)
+            query = query.order_by(PricingHistoryORM.effective_at.desc()).limit(limit)
+
+            return [
+                PricingRecord(
+                    id=row.id,
+                    provider=row.provider,
+                    model=row.model,
+                    input_price=row.input_price,
+                    output_price=row.output_price,
+                    cache_read_price=row.cache_read_price,
+                    cache_write_price=row.cache_write_price,
+                    effective_at=row.effective_at,
+                    created_at=row.created_at,
+                    note=row.note,
+                )
+                for row in query.all()
+            ]
+
+    def get_pricing(self, pricing_id: int) -> Optional[PricingRecord]:
+        """Get a specific pricing record."""
+        with self.db.session() as session:
+            row = session.query(PricingHistoryORM).filter(PricingHistoryORM.id == pricing_id).first()
+            if not row:
+                return None
+            return PricingRecord(
+                id=row.id,
+                provider=row.provider,
+                model=row.model,
+                input_price=row.input_price,
+                output_price=row.output_price,
+                cache_read_price=row.cache_read_price,
+                cache_write_price=row.cache_write_price,
+                effective_at=row.effective_at,
+                created_at=row.created_at,
+                note=row.note,
+            )
+
+    def delete_pricing(self, pricing_id: int) -> bool:
+        """Delete a pricing record."""
+        with self.db.session() as session:
+            row = session.query(PricingHistoryORM).filter(PricingHistoryORM.id == pricing_id).first()
+            if not row:
+                return False
+            session.delete(row)
+            session.commit()
+            return True
+
+    def get_pricing_at_time(
+        self,
+        provider: str,
+        model: str,
+        timestamp: int,
+    ) -> Optional[PricingRecord]:
+        """Get the effective pricing for a provider/model at a specific time."""
+        with self.db.session() as session:
+            row = (
+                session.query(PricingHistoryORM)
+                .filter(PricingHistoryORM.provider == provider)
+                .filter(PricingHistoryORM.model == model)
+                .filter(PricingHistoryORM.effective_at <= timestamp)
+                .order_by(PricingHistoryORM.effective_at.desc())
+                .first()
+            )
+            if not row:
+                return None
+            return PricingRecord(
+                id=row.id,
+                provider=row.provider,
+                model=row.model,
+                input_price=row.input_price,
+                output_price=row.output_price,
+                cache_read_price=row.cache_read_price,
+                cache_write_price=row.cache_write_price,
+                effective_at=row.effective_at,
+                created_at=row.created_at,
+                note=row.note,
+            )
+
+    def get_providers_models(self) -> List[dict]:
+        """Get list of unique provider/model combinations with latest pricing."""
+        with self.db.session() as session:
+            from sqlalchemy import func
+
+            # Get latest pricing for each provider/model
+            subquery = (
+                session.query(
+                    PricingHistoryORM.provider,
+                    PricingHistoryORM.model,
+                    func.max(PricingHistoryORM.effective_at).label("max_effective"),
+                )
+                .group_by(PricingHistoryORM.provider, PricingHistoryORM.model)
+                .subquery()
+            )
+
+            results = (
+                session.query(PricingHistoryORM)
+                .join(
+                    subquery,
+                    (PricingHistoryORM.provider == subquery.c.provider)
+                    & (PricingHistoryORM.model == subquery.c.model)
+                    & (PricingHistoryORM.effective_at == subquery.c.max_effective),
+                )
+                .all()
+            )
+
+            return [
+                {
+                    "provider": r.provider,
+                    "model": r.model,
+                    "input_price": r.input_price,
+                    "output_price": r.output_price,
+                    "effective_at": r.effective_at,
+                }
+                for r in results
+            ]
+
+    def get_pricing_history_by_provider(
+        self,
+        provider: Optional[str] = None,
+        days: int = 30,
+    ) -> List[dict]:
+        """Get pricing history for charts, optionally filtered by provider."""
+        cutoff = int(time.time()) - (days * 24 * 3600)
+
+        with self.db.session() as session:
+            query = session.query(PricingHistoryORM).filter(
+                PricingHistoryORM.effective_at >= cutoff
+            )
+            if provider:
+                query = query.filter(PricingHistoryORM.provider == provider)
+            query = query.order_by(PricingHistoryORM.effective_at.asc())
+
+            return [
+                {
+                    "id": r.id,
+                    "provider": r.provider,
+                    "model": r.model,
+                    "input_price": r.input_price,
+                    "output_price": r.output_price,
+                    "effective_at": r.effective_at,
+                    "note": r.note,
+                }
+                for r in query.all()
+            ]
+
+    def get_cost_summary_by_provider(self, days: int = 30) -> List[dict]:
+        """Get cost summary grouped by provider and model."""
+        cutoff = int(time.time()) - (days * 24 * 3600)
+
+        with self.db.session() as session:
+            from sqlalchemy import func
+
+            results = (
+                session.query(
+                    ExecutionORM.provider,
+                    ExecutionORM.model,
+                    func.count(ExecutionORM.id).label("request_count"),
+                    func.sum(ExecutionORM.qtokens).label("total_input_tokens"),
+                    func.sum(ExecutionORM.atokens).label("total_output_tokens"),
+                    func.sum(ExecutionORM.total_cost).label("total_cost"),
+                )
+                .filter(ExecutionORM.created_at >= cutoff)
+                .filter(ExecutionORM.status == 200)
+                .group_by(ExecutionORM.provider, ExecutionORM.model)
+                .all()
+            )
+
+            return [
+                {
+                    "provider": r.provider or "unknown",
+                    "model": r.model,
+                    "request_count": r.request_count,
+                    "total_input_tokens": r.total_input_tokens or 0,
+                    "total_output_tokens": r.total_output_tokens or 0,
+                    "total_cost": r.total_cost or 0.0,
+                }
+                for r in results
             ]

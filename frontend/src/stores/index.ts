@@ -31,7 +31,7 @@ interface AppState {
   toggleSidebar: () => void
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>((set) => ({
   // Initial state
   tasks: [],
   totalTasks: 0,

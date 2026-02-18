@@ -210,13 +210,23 @@ class TaskService:
             # Run the task
             manager.run()
 
-            # Update completion status
+            # Update completion status and calculate total cost
             task_info.status = TaskStatus.COMPLETED
             task_info.completed_at = datetime.now()
 
             if progress:
                 progress.status = TaskStatus.COMPLETED
                 progress.progress_percent = 100.0
+
+            # Calculate and save total cost to database
+            try:
+                records = list(self._storage.fetch_run_records(run_id))
+                total_cost = sum(r.total_cost for r in records)
+                currency = records[0].currency if records else "CNY"
+                self._storage.update_run_cost(run_id, total_cost, currency)
+                logger.info("Task %s completed with total cost: %.4f %s", run_id, total_cost, currency)
+            except Exception as e:
+                logger.warning("Failed to update run cost: %s", e)
 
         except Exception as e:
             logger.exception("Task failed: %s", e)
@@ -527,6 +537,15 @@ class TaskService:
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0
 
+        def percentile(lst, p):
+            if not lst:
+                return 0
+            sorted_lst = sorted(lst)
+            k = (len(sorted_lst) - 1) * p / 100
+            f = int(k)
+            c = f + 1 if f + 1 < len(sorted_lst) else f
+            return sorted_lst[f] + (k - f) * (sorted_lst[c] - sorted_lst[f])
+
         return {
             "total_requests": total,
             "success_count": len(successful),
@@ -535,8 +554,311 @@ class TaskService:
             "total_cost": sum(r.total_cost for r in records),
             "currency": records[0].currency if records else "CNY",
             "avg_first_resp_time": avg(first_resp_times),
+            "p50_first_resp_time": percentile(first_resp_times, 50),
+            "p95_first_resp_time": percentile(first_resp_times, 95),
+            "p99_first_resp_time": percentile(first_resp_times, 99),
             "avg_char_per_second": avg(char_per_sec),
             "avg_token_throughput": avg(token_throughput),
             "total_input_tokens": sum(r.qtokens for r in records),
             "total_output_tokens": sum(r.atokens for r in records),
         }
+
+    def get_quick_report(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Generate a quick report for a completed task.
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            Quick report dictionary, or None if no data.
+        """
+        task_info = self._tasks.get(run_id)
+        stats = self.get_stats(run_id)
+
+        if not stats:
+            return None
+
+        # Calculate dimension scores
+        latency_score = self._calculate_latency_score(stats.get("avg_first_resp_time", 0))
+        throughput_score = self._calculate_throughput_score(stats.get("avg_token_throughput", 0))
+        success_score = self._calculate_success_score(stats.get("success_rate", 0))
+        cost_score = self._calculate_cost_score(stats.get("total_cost", 0), stats.get("total_requests", 1))
+
+        # Overall score (weighted average)
+        overall_score = round(
+            latency_score * 0.25 +
+            throughput_score * 0.25 +
+            success_score * 0.25 +
+            cost_score * 0.25
+        )
+
+        # Determine grade
+        grade = self._score_to_grade(overall_score)
+
+        # Generate alerts
+        alerts = self._generate_alerts(stats)
+
+        # Generate recommendations
+        recommendations = self._generate_recommendations(stats, latency_score, throughput_score, success_score, cost_score)
+
+        # Get executor summary
+        executor_summary = self._get_executor_summary(run_id)
+
+        # Calculate duration
+        duration_seconds = 0
+        if task_info and task_info.started_at and task_info.completed_at:
+            duration_seconds = (task_info.completed_at - task_info.started_at).total_seconds()
+
+        return {
+            "run_id": run_id,
+            "task_name": task_info.task_name if task_info else "Unknown Task",
+            "completed_at": task_info.completed_at if task_info else None,
+            "duration_seconds": duration_seconds,
+            "score": overall_score,
+            "grade": grade,
+            "dimension_scores": {
+                "latency": latency_score,
+                "throughput": throughput_score,
+                "success_rate": success_score,
+                "cost": cost_score,
+            },
+            "metrics": {
+                "total_requests": stats.get("total_requests", 0),
+                "success_rate": stats.get("success_rate", 0),
+                "avg_ttft": stats.get("avg_first_resp_time", 0),
+                "p95_ttft": stats.get("p95_first_resp_time", 0),
+                "avg_tps": stats.get("avg_token_throughput", 0),
+                "total_cost": stats.get("total_cost", 0),
+                "currency": stats.get("currency", "CNY"),
+                "total_input_tokens": stats.get("total_input_tokens", 0),
+                "total_output_tokens": stats.get("total_output_tokens", 0),
+            },
+            "executor_summary": executor_summary,
+            "alerts": alerts,
+            "recommendations": recommendations,
+        }
+
+    def _calculate_latency_score(self, avg_ttft_ms: float) -> int:
+        """Calculate latency score based on average TTFT."""
+        if avg_ttft_ms < 200:
+            return 100
+        elif avg_ttft_ms < 500:
+            return 90
+        elif avg_ttft_ms < 1000:
+            return 75
+        elif avg_ttft_ms < 2000:
+            return 60
+        elif avg_ttft_ms < 5000:
+            return 40
+        else:
+            return 20
+
+    def _calculate_throughput_score(self, avg_tps: float) -> int:
+        """Calculate throughput score based on average TPS."""
+        if avg_tps > 100:
+            return 100
+        elif avg_tps > 50:
+            return 90
+        elif avg_tps > 20:
+            return 75
+        elif avg_tps > 10:
+            return 60
+        elif avg_tps > 5:
+            return 40
+        else:
+            return 20
+
+    def _calculate_success_score(self, success_rate: float) -> int:
+        """Calculate success rate score."""
+        if success_rate >= 99.9:
+            return 100
+        elif success_rate >= 99:
+            return 95
+        elif success_rate >= 95:
+            return 80
+        elif success_rate >= 90:
+            return 60
+        elif success_rate >= 80:
+            return 40
+        else:
+            return 20
+
+    def _calculate_cost_score(self, total_cost: float, total_requests: int) -> int:
+        """Calculate cost efficiency score."""
+        if total_requests == 0:
+            return 75  # Default baseline
+
+        cost_per_request = total_cost / total_requests
+
+        # Cost per request thresholds (adjust based on typical LLM API costs)
+        if cost_per_request < 0.001:  # Very cheap
+            return 100
+        elif cost_per_request < 0.005:
+            return 90
+        elif cost_per_request < 0.01:
+            return 75
+        elif cost_per_request < 0.05:
+            return 60
+        elif cost_per_request < 0.1:
+            return 40
+        else:
+            return 20
+
+    def _score_to_grade(self, score: int) -> str:
+        """Convert numeric score to letter grade."""
+        if score >= 90:
+            return "S"
+        elif score >= 80:
+            return "A"
+        elif score >= 70:
+            return "B"
+        elif score >= 60:
+            return "C"
+        elif score >= 50:
+            return "D"
+        else:
+            return "F"
+
+    def _generate_alerts(self, stats: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate alerts based on statistics."""
+        alerts = []
+
+        # Check success rate
+        success_rate = stats.get("success_rate", 0)
+        if success_rate < 90:
+            alerts.append({
+                "type": "success_rate",
+                "severity": "error" if success_rate < 80 else "warning",
+                "message": f"成功率较低 ({success_rate:.1f}%)，存在较多失败请求",
+                "suggestion": "检查API配置、网络连接或降低并发数",
+            })
+
+        # Check latency
+        avg_ttft = stats.get("avg_first_resp_time", 0)
+        p95_ttft = stats.get("p95_first_resp_time", 0)
+        if avg_ttft > 2000:
+            alerts.append({
+                "type": "latency",
+                "severity": "warning",
+                "message": f"平均延迟较高 ({avg_ttft:.0f}ms)，影响用户体验",
+                "suggestion": "考虑优化prompt长度或使用更快的模型",
+            })
+        if p95_ttft > 5000:
+            alerts.append({
+                "type": "latency_p95",
+                "severity": "warning",
+                "message": f"P95延迟过高 ({p95_ttft:.0f}ms)，部分请求响应缓慢",
+                "suggestion": "检查是否有冷启动或网络波动问题",
+            })
+
+        # Check error distribution
+        error_count = stats.get("error_count", 0)
+        if error_count > 0:
+            alerts.append({
+                "type": "errors",
+                "severity": "info",
+                "message": f"发现 {error_count} 个错误请求",
+                "suggestion": "查看详细日志了解错误原因",
+            })
+
+        # Check throughput
+        avg_tps = stats.get("avg_token_throughput", 0)
+        if avg_tps < 10:
+            alerts.append({
+                "type": "throughput",
+                "severity": "info",
+                "message": f"吞吐量较低 ({avg_tps:.1f} TPS)",
+                "suggestion": "考虑增加并发数或使用流式输出",
+            })
+
+        return alerts
+
+    def _generate_recommendations(
+        self,
+        stats: Dict[str, Any],
+        latency_score: int,
+        throughput_score: int,
+        success_score: int,
+        cost_score: int,
+    ) -> List[Dict[str, Any]]:
+        """Generate optimization recommendations."""
+        recommendations = []
+
+        # Latency recommendations
+        if latency_score < 75:
+            recommendations.append({
+                "category": "performance",
+                "title": "优化响应延迟",
+                "description": "当前延迟偏高，建议优化prompt长度、使用prompt缓存或选择响应更快的模型",
+                "impact": "high",
+            })
+
+        # Throughput recommendations
+        if throughput_score < 60:
+            recommendations.append({
+                "category": "performance",
+                "title": "提升吞吐量",
+                "description": "当前吞吐量较低，可考虑增加并发请求数或启用流式输出",
+                "impact": "medium",
+            })
+
+        # Success rate recommendations
+        if success_score < 80:
+            recommendations.append({
+                "category": "reliability",
+                "title": "提高成功率",
+                "description": "当前错误率较高，建议检查API配置、添加重试机制或降低请求频率",
+                "impact": "high",
+            })
+
+        # Cost recommendations
+        if cost_score < 75:
+            recommendations.append({
+                "category": "cost",
+                "title": "优化成本",
+                "description": "可考虑启用prompt缓存、优化prompt长度或选择性价比更高的模型",
+                "impact": "medium",
+            })
+
+        # Always add cache recommendation if not extremely low cost
+        total_cost = stats.get("total_cost", 0)
+        total_requests = stats.get("total_requests", 1)
+        if total_requests > 0 and total_cost / total_requests > 0.001:
+            recommendations.append({
+                "category": "cost",
+                "title": "启用Prompt缓存",
+                "description": "对于重复的prompt，启用缓存可节省20-50%的API成本",
+                "impact": "low",
+            })
+
+        return recommendations
+
+    def _get_executor_summary(self, run_id: str) -> List[Dict[str, Any]]:
+        """Get summary statistics by executor."""
+        records = list(self._storage.fetch_run_records(run_id))
+
+        # Group by executor
+        executors: Dict[str, List[Any]] = {}
+        for r in records:
+            exec_id = r.executor_id or "default"
+            if exec_id not in executors:
+                executors[exec_id] = []
+            executors[exec_id].append(r)
+
+        summary = []
+        for exec_id, exec_records in executors.items():
+            total = len(exec_records)
+            successful = [r for r in exec_records if r.status == 200]
+            ttfts = [r.first_resp_time for r in successful if r.first_resp_time > 0]
+            tps_list = [r.token_throughput for r in successful if r.token_throughput > 0]
+
+            summary.append({
+                "id": exec_id,
+                "requests": total,
+                "success_rate": len(successful) / total * 100 if total > 0 else 0,
+                "avg_ttft": sum(ttfts) / len(ttfts) if ttfts else 0,
+                "avg_tps": sum(tps_list) / len(tps_list) if tps_list else 0,
+                "cost": sum(r.total_cost for r in exec_records),
+            })
+
+        return summary

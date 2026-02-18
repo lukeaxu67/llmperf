@@ -5,23 +5,20 @@ import {
   Button,
   Space,
   Typography,
-  Select,
   message,
   Alert,
   List,
-  Spin,
   Divider,
 } from 'antd'
 import {
   ArrowLeftOutlined,
   PlayCircleOutlined,
-  DownloadOutlined,
   FileTextOutlined,
 } from '@ant-design/icons'
 import YamlEditor from '@/components/YamlEditor'
 import { configApi, taskApi } from '@/services/api'
 
-const { Title, Text, Paragraph } = Typography
+const { Title, Paragraph } = Typography
 
 const defaultConfig = `info: "示例任务"
 

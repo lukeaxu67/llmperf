@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import CreateTask from './pages/CreateTask'
-import Analysis from './pages/Analysis'
+import Pricing from './pages/Pricing'
 import Datasets from './pages/Datasets'
 import Settings from './pages/Settings'
 
@@ -18,8 +18,7 @@ function App() {
           <Route path="tasks" element={<Tasks />} />
           <Route path="tasks/create" element={<CreateTask />} />
           <Route path="tasks/:id" element={<TaskDetail />} />
-          <Route path="analysis" element={<Analysis />} />
-          <Route path="analysis/:id" element={<Analysis />} />
+          <Route path="pricing" element={<Pricing />} />
           <Route path="datasets" element={<Datasets />} />
           <Route path="settings" element={<Settings />} />
         </Route>

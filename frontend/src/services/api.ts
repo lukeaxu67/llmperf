@@ -102,6 +102,35 @@ export interface AnalysisSummary {
   by_executor: Record<string, any>
 }
 
+// Pricing types
+export interface PricingRecord {
+  id: number
+  provider: string
+  model: string
+  input_price: number
+  output_price: number
+  cache_read_price: number
+  cache_write_price: number
+  effective_at: number
+  created_at: number
+  note: string
+}
+
+export interface CostSummary {
+  provider: string
+  model: string
+  request_count: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_cost: number
+}
+
+export interface TotalCost {
+  total_cost: number
+  run_count: number
+  currency: string
+}
+
 // API Functions
 export const taskApi = {
   list: (params?: { status?: string; limit?: number; offset?: number }) =>
@@ -110,7 +139,7 @@ export const taskApi = {
   get: (runId: string) =>
     api.get<Task>(`/tasks/${runId}`),
 
-  create: (data: { config_path?: string; config_content?: string; run_id?: string }) =>
+  create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean }) =>
     api.post<Task>('/tasks', data),
 
   getProgress: (runId: string) =>
@@ -118,6 +147,9 @@ export const taskApi = {
 
   getStats: (runId: string) =>
     api.get<TaskStats>(`/tasks/${runId}/stats`),
+
+  getReport: (runId: string) =>
+    api.get(`/tasks/${runId}/report`),
 
   cancel: (runId: string) =>
     api.post(`/tasks/${runId}/cancel`),
@@ -127,26 +159,43 @@ export const taskApi = {
 
   delete: (runId: string) =>
     api.delete(`/tasks/${runId}`),
-}
-
-export const analysisApi = {
-  getSummary: (runId: string) =>
-    api.get<AnalysisSummary>(`/analysis/${runId}/summary`),
-
-  getTimeseries: (runId: string, metric: string, interval?: string) =>
-    api.get(`/analysis/${runId}/timeseries`, { params: { metric, interval } }),
-
-  compare: (runId: string) =>
-    api.get(`/analysis/${runId}/compare`),
-
-  getAnomalies: (runId: string, sensitivity?: number) =>
-    api.get(`/analysis/${runId}/anomalies`, { params: { sensitivity } }),
 
   export: (runId: string, format: string) =>
-    api.post(`/analysis/${runId}/export`, { format }),
+    api.post(`/tasks/${runId}/export`, { format }),
+}
 
-  getHistory: (params?: { limit?: number; days?: number }) =>
-    api.get('/analysis/history', { params }),
+export const pricingApi = {
+  list: (params?: { provider?: string; model?: string; limit?: number }) =>
+    api.get<{ items: PricingRecord[]; total: number }>('/pricing', { params }),
+
+  add: (data: {
+    provider: string
+    model: string
+    input_price: number
+    output_price: number
+    cache_read_price?: number
+    cache_write_price?: number
+    effective_at?: number
+    note?: string
+  }) => api.post<PricingRecord>('/pricing', data),
+
+  get: (id: number) =>
+    api.get<PricingRecord>(`/pricing/${id}`),
+
+  delete: (id: number) =>
+    api.delete(`/pricing/${id}`),
+
+  getProviders: () =>
+    api.get('/pricing/providers'),
+
+  getHistory: (params?: { provider?: string; days?: number }) =>
+    api.get('/pricing/history/chart', { params }),
+
+  getCostSummary: (days?: number) =>
+    api.get<CostSummary[]>('/pricing/cost/summary', { params: { days } }),
+
+  getTotalCost: () =>
+    api.get<TotalCost>('/pricing/cost/total'),
 }
 
 export const datasetApi = {

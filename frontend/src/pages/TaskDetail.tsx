@@ -16,16 +16,21 @@ import {
   message,
   Spin,
   Empty,
-  Tabs,
-  Table,
+  List,
 } from 'antd'
 import {
   ArrowLeftOutlined,
   StopOutlined,
   RedoOutlined,
   DownloadOutlined,
-  LineChartOutlined,
   FileTextOutlined,
+  CheckCircleOutlined,
+  WarningOutlined,
+  InfoCircleOutlined,
+  ThunderboltOutlined,
+  DashboardOutlined,
+  DollarOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import StatusTag from '@/components/StatusTag'
@@ -34,6 +39,70 @@ import { taskApi, Task, TaskProgress, TaskStats } from '@/services/api'
 
 const { Title, Text } = Typography
 
+interface QuickReport {
+  run_id: string
+  task_name: string
+  completed_at: string | null
+  duration_seconds: number
+  score: number
+  grade: string
+  dimension_scores: {
+    latency: number
+    throughput: number
+    success_rate: number
+    cost: number
+  }
+  metrics: {
+    total_requests: number
+    success_rate: number
+    avg_ttft: number
+    p95_ttft: number
+    avg_tps: number
+    total_cost: number
+    currency: string
+    total_input_tokens: number
+    total_output_tokens: number
+  }
+  executor_summary: Array<{
+    id: string
+    requests: number
+    success_rate: number
+    avg_ttft: number
+    avg_tps: number
+    cost: number
+  }>
+  alerts: Array<{
+    type: string
+    severity: 'info' | 'warning' | 'error'
+    message: string
+    suggestion?: string
+  }>
+  recommendations: Array<{
+    category: 'performance' | 'cost' | 'reliability'
+    title: string
+    description: string
+    impact: 'high' | 'medium' | 'low'
+  }>
+}
+
+const gradeColors: Record<string, string> = {
+  S: '#52c41a',
+  A: '#1890ff',
+  B: '#722ed1',
+  C: '#fa8c16',
+  D: '#fa541c',
+  F: '#f5222d',
+}
+
+const gradeBgColors: Record<string, string> = {
+  S: '#f6ffed',
+  A: '#e6f7ff',
+  B: '#f9f0ff',
+  C: '#fff7e6',
+  D: '#fff2e8',
+  F: '#fff1f0',
+}
+
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -41,6 +110,7 @@ export default function TaskDetail() {
   const [task, setTask] = useState<Task | null>(null)
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [stats, setStats] = useState<TaskStats | null>(null)
+  const [report, setReport] = useState<QuickReport | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -68,11 +138,18 @@ export default function TaskDetail() {
       // Fetch progress
       await fetchProgress(runId)
 
-      // Fetch stats if completed
+      // Fetch stats and report if completed
       if (taskData.status === 'completed') {
         try {
           const statsData = await taskApi.getStats(runId) as any
           setStats(statsData)
+        } catch (e) {
+          // Ignore
+        }
+
+        try {
+          const reportData = await taskApi.getReport(runId) as any
+          setReport(reportData)
         } catch (e) {
           // Ignore
         }
@@ -127,6 +204,41 @@ export default function TaskDetail() {
     }
   }
 
+  const getAlertIcon = (severity: string) => {
+    switch (severity) {
+      case 'error':
+        return <StopOutlined style={{ color: '#f5222d' }} />
+      case 'warning':
+        return <WarningOutlined style={{ color: '#fa8c16' }} />
+      default:
+        return <InfoCircleOutlined style={{ color: '#1890ff' }} />
+    }
+  }
+
+  const getImpactColor = (impact: string) => {
+    switch (impact) {
+      case 'high':
+        return 'red'
+      case 'medium':
+        return 'orange'
+      default:
+        return 'blue'
+    }
+  }
+
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'performance':
+        return <ThunderboltOutlined />
+      case 'cost':
+        return <DollarOutlined />
+      case 'reliability':
+        return <SafetyOutlined />
+      default:
+        return <InfoCircleOutlined />
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 400 }}>
@@ -139,35 +251,6 @@ export default function TaskDetail() {
     return <Empty description="任务不存在" />
   }
 
-  const executorColumns = [
-    { title: 'Executor ID', dataIndex: 'executor_id', key: 'executor_id' },
-    { title: '请求数', dataIndex: 'total_requests', key: 'total_requests' },
-    {
-      title: '成功率',
-      dataIndex: 'success_rate',
-      key: 'success_rate',
-      render: (v: number) => `${v.toFixed(1)}%`,
-    },
-    {
-      title: '平均延迟',
-      dataIndex: 'avg_first_resp_time',
-      key: 'avg_first_resp_time',
-      render: (v: number) => `${v.toFixed(0)}ms`,
-    },
-    {
-      title: 'P95延迟',
-      dataIndex: 'p95_first_resp_time',
-      key: 'p95_first_resp_time',
-      render: (v: number) => `${v.toFixed(0)}ms`,
-    },
-    {
-      title: '费用',
-      dataIndex: 'total_cost',
-      key: 'total_cost',
-      render: (v: number) => `${v.toFixed(4)}`,
-    },
-  ]
-
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
@@ -175,6 +258,236 @@ export default function TaskDetail() {
           返回列表
         </Button>
       </div>
+
+      {/* Quick Report Section - Show when completed */}
+      {task.status === 'completed' && report && (
+        <Card style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+            <div>
+              <Title level={3} style={{ margin: 0, marginBottom: 8 }}>
+                测试报告
+              </Title>
+              <Space>
+                <Text type="secondary">{report.task_name}</Text>
+                <Text type="secondary">|</Text>
+                <Text type="secondary">Run ID: {report.run_id}</Text>
+              </Space>
+            </div>
+            <Space>
+              <Button icon={<DownloadOutlined />} onClick={() => handleExport('csv')}>
+                导出 CSV
+              </Button>
+              <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
+                生成报告
+              </Button>
+            </Space>
+          </div>
+
+          {/* Score Card */}
+          <Row gutter={24} style={{ marginBottom: 24 }}>
+            <Col span={6}>
+              <Card
+                style={{
+                  background: gradeBgColors[report.grade] || '#f5f5f5',
+                  textAlign: 'center',
+                  height: '100%',
+                }}
+                bodyStyle={{ padding: '24px 16px' }}
+              >
+                <div
+                  style={{
+                    fontSize: 64,
+                    fontWeight: 'bold',
+                    color: gradeColors[report.grade] || '#666',
+                    lineHeight: 1,
+                    marginBottom: 8,
+                  }}
+                >
+                  {report.grade}
+                </div>
+                <div style={{ fontSize: 24, color: '#666' }}>
+                  {report.score}分
+                </div>
+                <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+                  耗时 {Math.floor(report.duration_seconds)}秒
+                </div>
+              </Card>
+            </Col>
+            <Col span={18}>
+              <Row gutter={16}>
+                <Col span={6}>
+                  <Card size="small" style={{ textAlign: 'center', height: '100%' }} bodyStyle={{ padding: 16 }}>
+                    <DashboardOutlined style={{ fontSize: 24, color: '#1890ff', marginBottom: 8 }} />
+                    <div style={{ fontSize: 20, fontWeight: 'bold' }}>
+                      {report.dimension_scores.latency}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666' }}>延迟评分</div>
+                    <Progress
+                      percent={report.dimension_scores.latency}
+                      showInfo={false}
+                      strokeColor="#1890ff"
+                      size="small"
+                      style={{ marginTop: 8 }}
+                    />
+                  </Card>
+                </Col>
+                <Col span={6}>
+                  <Card size="small" style={{ textAlign: 'center', height: '100%' }} bodyStyle={{ padding: 16 }}>
+                    <ThunderboltOutlined style={{ fontSize: 24, color: '#52c41a', marginBottom: 8 }} />
+                    <div style={{ fontSize: 20, fontWeight: 'bold' }}>
+                      {report.dimension_scores.throughput}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666' }}>吞吐评分</div>
+                    <Progress
+                      percent={report.dimension_scores.throughput}
+                      showInfo={false}
+                      strokeColor="#52c41a"
+                      size="small"
+                      style={{ marginTop: 8 }}
+                    />
+                  </Card>
+                </Col>
+                <Col span={6}>
+                  <Card size="small" style={{ textAlign: 'center', height: '100%' }} bodyStyle={{ padding: 16 }}>
+                    <SafetyOutlined style={{ fontSize: 24, color: '#722ed1', marginBottom: 8 }} />
+                    <div style={{ fontSize: 20, fontWeight: 'bold' }}>
+                      {report.dimension_scores.success_rate}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666' }}>成功率评分</div>
+                    <Progress
+                      percent={report.dimension_scores.success_rate}
+                      showInfo={false}
+                      strokeColor="#722ed1"
+                      size="small"
+                      style={{ marginTop: 8 }}
+                    />
+                  </Card>
+                </Col>
+                <Col span={6}>
+                  <Card size="small" style={{ textAlign: 'center', height: '100%' }} bodyStyle={{ padding: 16 }}>
+                    <DollarOutlined style={{ fontSize: 24, color: '#fa8c16', marginBottom: 8 }} />
+                    <div style={{ fontSize: 20, fontWeight: 'bold' }}>
+                      {report.dimension_scores.cost}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#666' }}>成本评分</div>
+                    <Progress
+                      percent={report.dimension_scores.cost}
+                      showInfo={false}
+                      strokeColor="#fa8c16"
+                      size="small"
+                      style={{ marginTop: 8 }}
+                    />
+                  </Card>
+                </Col>
+              </Row>
+            </Col>
+          </Row>
+
+          {/* Core Metrics */}
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col span={4}>
+              <Statistic
+                title="总请求数"
+                value={report.metrics.total_requests}
+                suffix="次"
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="成功率"
+                value={report.metrics.success_rate}
+                precision={1}
+                suffix="%"
+                valueStyle={{ color: report.metrics.success_rate > 95 ? '#3f8600' : '#cf1322' }}
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="平均TTFT"
+                value={report.metrics.avg_ttft}
+                precision={0}
+                suffix="ms"
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="P95 TTFT"
+                value={report.metrics.p95_ttft}
+                precision={0}
+                suffix="ms"
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="平均TPS"
+                value={report.metrics.avg_tps}
+                precision={1}
+                suffix="tok/s"
+              />
+            </Col>
+            <Col span={4}>
+              <Statistic
+                title="总费用"
+                value={report.metrics.total_cost}
+                precision={4}
+                prefix={report.metrics.currency === 'CNY' ? '¥' : '$'}
+              />
+            </Col>
+          </Row>
+
+          {/* Alerts and Recommendations */}
+          {report.alerts.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <Title level={5}>
+                <WarningOutlined style={{ marginRight: 8, color: '#fa8c16' }} />
+                发现问题
+              </Title>
+              <List
+                size="small"
+                dataSource={report.alerts}
+                renderItem={(alert) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      avatar={getAlertIcon(alert.severity)}
+                      title={alert.message}
+                      description={alert.suggestion}
+                    />
+                  </List.Item>
+                )}
+              />
+            </div>
+          )}
+
+          {report.recommendations.length > 0 && (
+            <div>
+              <Title level={5}>
+                <CheckCircleOutlined style={{ marginRight: 8, color: '#52c41a' }} />
+                优化建议
+              </Title>
+              <List
+                size="small"
+                dataSource={report.recommendations}
+                renderItem={(rec) => (
+                  <List.Item>
+                    <List.Item.Meta
+                      avatar={getCategoryIcon(rec.category)}
+                      title={
+                        <Space>
+                          <span>{rec.title}</span>
+                          <Tag color={getImpactColor(rec.impact)}>
+                            {rec.impact === 'high' ? '高影响' : rec.impact === 'medium' ? '中影响' : '低影响'}
+                          </Tag>
+                        </Space>
+                      }
+                      description={rec.description}
+                    />
+                  </List.Item>
+                )}
+              />
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
@@ -196,20 +509,13 @@ export default function TaskDetail() {
             {task.status === 'failed' && (
               <Button icon={<RedoOutlined />} onClick={handleRetry}>重试</Button>
             )}
-            {task.status === 'completed' && (
+            {task.status === 'completed' && !report && (
               <>
                 <Button icon={<DownloadOutlined />} onClick={() => handleExport('csv')}>
                   导出 CSV
                 </Button>
                 <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
                   生成报告
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<LineChartOutlined />}
-                  onClick={() => navigate(`/analysis/${task.run_id}`)}
-                >
-                  查看分析
                 </Button>
               </>
             )}
@@ -258,8 +564,8 @@ export default function TaskDetail() {
           </>
         )}
 
-        {/* Stats Section */}
-        {task.status === 'completed' && stats && (
+        {/* Stats Section - Only show if no report */}
+        {task.status === 'completed' && stats && !report && (
           <>
             <Divider>执行统计</Divider>
             <Row gutter={16}>

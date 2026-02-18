@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from pydantic import BaseModel, Field
 
 from ..services.task_service import TaskService, TaskStatus, TaskInfo
@@ -23,14 +23,7 @@ class TaskCreateRequest(BaseModel):
     config_content: Optional[str] = Field(None, description="YAML config content")
     pricing_path: Optional[str] = Field(None, description="Path to pricing file")
     run_id: Optional[str] = Field(None, description="Optional run ID")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "config_path": "template/0.1.0.yaml",
-            }
-        }
-    }
+    auto_start: bool = Field(True, description="Auto start task after creation")
 
 
 class TaskResponse(BaseModel):
@@ -72,8 +65,26 @@ class TaskStatsResponse(BaseModel):
     total_cost: float
     currency: str
     avg_first_resp_time: float
+    p50_first_resp_time: float
+    p95_first_resp_time: float
+    p99_first_resp_time: float
     avg_char_per_second: float
     avg_token_throughput: float
+
+
+class QuickReportResponse(BaseModel):
+    """Quick report response."""
+    run_id: str
+    task_name: str
+    completed_at: Optional[datetime]
+    duration_seconds: float
+    score: int
+    grade: str
+    dimension_scores: Dict[str, int]
+    metrics: Dict[str, Any]
+    executor_summary: List[Dict[str, Any]]
+    alerts: List[Dict[str, Any]]
+    recommendations: List[Dict[str, Any]]
 
 
 def get_service() -> TaskService:
@@ -86,11 +97,10 @@ def get_service() -> TaskService:
     "",
     response_model=TaskResponse,
     summary="Create a new task",
-    description="Create and start a new benchmarking task from a YAML configuration.",
 )
 async def create_task(
-    request: TaskCreateRequest,
-    background_tasks: BackgroundTasks,
+    request: TaskCreateRequest = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Create a new benchmarking task."""
     service = get_service()
@@ -110,16 +120,17 @@ async def create_task(
             run_id=request.run_id,
         )
 
-        # Start task in background
-        background_tasks.add_task(
-            service.run_task,
-            task_info.run_id,
-        )
+        # Start task in background if auto_start
+        if request.auto_start:
+            background_tasks.add_task(
+                service.run_task,
+                task_info.run_id,
+            )
 
         return TaskResponse(
             run_id=task_info.run_id,
             status=task_info.status,
-            message="Task created and started",
+            message="Task created" + (" and started" if request.auto_start else ""),
             created_at=task_info.created_at,
         )
 
@@ -132,12 +143,11 @@ async def create_task(
     "",
     response_model=TaskListResponse,
     summary="List tasks",
-    description="Get a list of all tasks, optionally filtered by status.",
 )
 async def list_tasks(
-    status: Optional[TaskStatus] = Query(None, description="Filter by status"),
-    limit: int = Query(50, ge=1, le=500, description="Maximum number of tasks"),
-    offset: int = Query(0, ge=0, description="Offset for pagination"),
+    status: Optional[TaskStatus] = None,
+    limit: int = 50,
+    offset: int = 0,
 ):
     """List all tasks."""
     service = get_service()
@@ -153,7 +163,6 @@ async def list_tasks(
 @router.get(
     "/{run_id}",
     summary="Get task details",
-    description="Get detailed information about a specific task.",
 )
 async def get_task(run_id: str):
     """Get task details."""
@@ -170,7 +179,6 @@ async def get_task(run_id: str):
     "/{run_id}/progress",
     response_model=TaskProgressResponse,
     summary="Get task progress",
-    description="Get real-time progress information for a running task.",
 )
 async def get_task_progress(run_id: str):
     """Get task progress."""
@@ -199,7 +207,6 @@ async def get_task_progress(run_id: str):
     "/{run_id}/stats",
     response_model=TaskStatsResponse,
     summary="Get task statistics",
-    description="Get statistical summary for a completed task.",
 )
 async def get_task_stats(run_id: str):
     """Get task statistics."""
@@ -218,16 +225,34 @@ async def get_task_stats(run_id: str):
         total_cost=stats.get("total_cost", 0.0),
         currency=stats.get("currency", "CNY"),
         avg_first_resp_time=stats.get("avg_first_resp_time", 0.0),
+        p50_first_resp_time=stats.get("p50_first_resp_time", 0.0),
+        p95_first_resp_time=stats.get("p95_first_resp_time", 0.0),
+        p99_first_resp_time=stats.get("p99_first_resp_time", 0.0),
         avg_char_per_second=stats.get("avg_char_per_second", 0.0),
         avg_token_throughput=stats.get("avg_token_throughput", 0.0),
     )
+
+
+@router.get(
+    "/{run_id}/report",
+    response_model=QuickReportResponse,
+    summary="Get quick report",
+)
+async def get_quick_report(run_id: str):
+    """Get quick report for a completed task."""
+    service = get_service()
+    report = service.get_quick_report(run_id)
+
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    return QuickReportResponse(**report)
 
 
 @router.post(
     "/{run_id}/cancel",
     response_model=TaskResponse,
     summary="Cancel a task",
-    description="Cancel a running task.",
 )
 async def cancel_task(run_id: str):
     """Cancel a running task."""
@@ -251,7 +276,6 @@ async def cancel_task(run_id: str):
     "/{run_id}/retry",
     response_model=TaskResponse,
     summary="Retry a failed task",
-    description="Retry a failed task from the beginning.",
 )
 async def retry_task(
     run_id: str,
@@ -284,7 +308,6 @@ async def retry_task(
 @router.delete(
     "/{run_id}",
     summary="Delete a task",
-    description="Delete a task and its data.",
 )
 async def delete_task(run_id: str):
     """Delete a task."""

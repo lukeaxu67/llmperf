@@ -17,9 +17,6 @@ export default function TaskProgressBar({
   total,
   size = 'default',
 }: TaskProgressBarProps) {
-  const successPercent = total > 0 ? (successCount / total) * 100 : 0
-  const errorPercent = total > 0 ? (errorCount / total) * 100 : 0
-
   return (
     <div>
       <Progress

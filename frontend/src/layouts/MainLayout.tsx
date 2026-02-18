@@ -4,7 +4,7 @@ import { Layout, Menu, theme, Button, Badge, Dropdown, Space, Avatar } from 'ant
 import {
   DashboardOutlined,
   RocketOutlined,
-  BarChartOutlined,
+  DollarOutlined,
   DatabaseOutlined,
   SettingOutlined,
   BellOutlined,
@@ -28,9 +28,9 @@ const menuItems: MenuProps['items'] = [
     label: '任务管理',
   },
   {
-    key: '/analysis',
-    icon: <BarChartOutlined />,
-    label: '数据分析',
+    key: '/pricing',
+    icon: <DollarOutlined />,
+    label: '成本监控',
   },
   {
     key: '/datasets',

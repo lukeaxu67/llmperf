@@ -24,6 +24,28 @@ class RunORM(Base):
     config_content: Mapped[str] = mapped_column(Text, default="")
     pricing_path: Mapped[str] = mapped_column(Text, default="")
     pricing_content: Mapped[str] = mapped_column(Text, default="")
+    # Aggregated cost for this run
+    total_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    currency: Mapped[str] = mapped_column(String, default="CNY")
+
+
+class PricingHistoryORM(Base):
+    """Pricing history for different vendors and models."""
+    __tablename__ = "pricing_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Price per million tokens in CNY
+    input_price: Mapped[float] = mapped_column(Float, nullable=False)
+    output_price: Mapped[float] = mapped_column(Float, nullable=False)
+    # Cached tokens price (if applicable, per million tokens in CNY)
+    cache_read_price: Mapped[float] = mapped_column(Float, default=0.0)
+    cache_write_price: Mapped[float] = mapped_column(Float, default=0.0)
+    # Effective timestamp
+    effective_at: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()))
+    note: Mapped[str] = mapped_column(Text, default="")
 
 
 class ExecutionORM(Base):
@@ -81,6 +103,7 @@ class Database:
         self._ensure_run_snapshot_columns()
         self._ensure_request_params_column()
         self._ensure_provider_column()
+        self._ensure_pricing_history_table()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def session(self) -> Session:
@@ -193,6 +216,40 @@ class Database:
                     conn.execute(
                         text("ALTER TABLE runs ADD COLUMN pricing_content TEXT DEFAULT ''")
                     )
+                if "total_cost" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN total_cost REAL DEFAULT 0.0")
+                    )
+                if "currency" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN currency TEXT DEFAULT 'CNY'")
+                    )
+        except Exception:
+            pass
+
+    def _ensure_pricing_history_table(self) -> None:
+        """Create pricing_history table if not exists."""
+        try:
+            with self.engine.connect() as conn:
+                if self._table_exists(conn, "pricing_history"):
+                    return
+                conn.execute(text("""
+                    CREATE TABLE pricing_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        provider TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        input_price REAL NOT NULL,
+                        output_price REAL NOT NULL,
+                        cache_read_price REAL DEFAULT 0.0,
+                        cache_write_price REAL DEFAULT 0.0,
+                        effective_at INTEGER NOT NULL,
+                        created_at INTEGER DEFAULT 0,
+                        note TEXT DEFAULT ''
+                    )
+                """))
+                conn.execute(text("CREATE INDEX idx_pricing_provider ON pricing_history(provider)"))
+                conn.execute(text("CREATE INDEX idx_pricing_model ON pricing_history(model)"))
+                conn.execute(text("CREATE INDEX idx_pricing_effective ON pricing_history(effective_at)"))
         except Exception:
             pass
 
