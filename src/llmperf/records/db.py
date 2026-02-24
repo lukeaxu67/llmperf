@@ -22,8 +22,7 @@ class RunORM(Base):
     created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()))
     config_path: Mapped[str] = mapped_column(Text, default="")
     config_content: Mapped[str] = mapped_column(Text, default="")
-    pricing_path: Mapped[str] = mapped_column(Text, default="")
-    pricing_content: Mapped[str] = mapped_column(Text, default="")
+    completed_at: Mapped[int] = mapped_column(Integer, default=0)
     # Aggregated cost for this run
     total_cost: Mapped[float] = mapped_column(Float, default=0.0)
     currency: Mapped[str] = mapped_column(String, default="CNY")
@@ -67,6 +66,10 @@ class ExecutionORM(Base):
     cache_cost: Mapped[float] = mapped_column(Float, default=0.0)
     total_cost: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String)
+    # Price snapshots at execution time (CNY per million tokens)
+    input_price_snapshot: Mapped[float] = mapped_column(Float, default=0.0)
+    output_price_snapshot: Mapped[float] = mapped_column(Float, default=0.0)
+    cache_price_snapshot: Mapped[float] = mapped_column(Float, default=0.0)
     usage_json: Mapped[str] = mapped_column(Text)
     request_params_json: Mapped[str] = mapped_column(Text, default="{}")
     action_times: Mapped[str] = mapped_column(Text)
@@ -104,6 +107,7 @@ class Database:
         self._ensure_request_params_column()
         self._ensure_provider_column()
         self._ensure_pricing_history_table()
+        self._ensure_execution_price_snapshot_columns()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def session(self) -> Session:
@@ -208,13 +212,9 @@ class Database:
                     conn.execute(
                         text("ALTER TABLE runs ADD COLUMN config_content TEXT DEFAULT ''")
                     )
-                if "pricing_path" not in existing:
+                if "completed_at" not in existing:
                     conn.execute(
-                        text("ALTER TABLE runs ADD COLUMN pricing_path TEXT DEFAULT ''")
-                    )
-                if "pricing_content" not in existing:
-                    conn.execute(
-                        text("ALTER TABLE runs ADD COLUMN pricing_content TEXT DEFAULT ''")
+                        text("ALTER TABLE runs ADD COLUMN completed_at INTEGER DEFAULT 0")
                     )
                 if "total_cost" not in existing:
                     conn.execute(
@@ -250,6 +250,29 @@ class Database:
                 conn.execute(text("CREATE INDEX idx_pricing_provider ON pricing_history(provider)"))
                 conn.execute(text("CREATE INDEX idx_pricing_model ON pricing_history(model)"))
                 conn.execute(text("CREATE INDEX idx_pricing_effective ON pricing_history(effective_at)"))
+        except Exception:
+            pass
+
+    def _ensure_execution_price_snapshot_columns(self) -> None:
+        """Add price snapshot columns to executions table if not exists."""
+        try:
+            with self.engine.connect() as conn:
+                if not self._table_exists(conn, "executions"):
+                    return
+                pragma = conn.execute(text("PRAGMA table_info(executions);")).fetchall()
+                existing = {col[1] for col in pragma}
+                if "input_price_snapshot" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE executions ADD COLUMN input_price_snapshot REAL DEFAULT 0.0")
+                    )
+                if "output_price_snapshot" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE executions ADD COLUMN output_price_snapshot REAL DEFAULT 0.0")
+                    )
+                if "cache_price_snapshot" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE executions ADD COLUMN cache_price_snapshot REAL DEFAULT 0.0")
+                    )
         except Exception:
             pass
 

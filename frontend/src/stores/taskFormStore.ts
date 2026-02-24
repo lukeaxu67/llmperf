@@ -13,7 +13,13 @@ import {
 } from '@/types/taskConfig'
 import { generateYaml, parseYaml } from '@/utils/yamlGenerator'
 
+type TaskType = 'benchmark' | 'monitoring'
+
 interface TaskFormStore extends TaskFormState {
+  // Task type
+  taskType: TaskType
+  setTaskType: (type: TaskType) => void
+
   // Step navigation
   setStep: (step: number) => void
   nextStep: () => void
@@ -58,6 +64,10 @@ const initialState: TaskFormState = {
 
 export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
   ...initialState,
+  taskType: 'benchmark',
+
+  // Task type
+  setTaskType: (type) => set({ taskType: type }),
 
   // Step navigation
   setStep: (step) => set({ currentStep: step }),
@@ -161,6 +171,7 @@ export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
       iteratorConfig: state.iteratorConfig,
       executors: state.executors,
       currentStep: state.currentStep,
+      taskType: state.taskType,
     })
   },
 
@@ -175,7 +186,7 @@ export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
   },
 
   // Form state
-  reset: () => set(initialState),
+  reset: () => set({ ...initialState, taskType: 'benchmark' }),
 
   isValid: () => {
     const state = get()

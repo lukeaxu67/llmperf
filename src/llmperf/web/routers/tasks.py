@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import io
+import json
+import csv
 import logging
+import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..services.task_service import TaskService, TaskStatus, TaskInfo
+from ..services.pricing_service import PricingService, PriceInfo
+from llmperf.config.runtime import load_runtime_config
+from llmperf.records.storage import Storage
+from llmperf.records.model import RunRecord
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +30,6 @@ class TaskCreateRequest(BaseModel):
     """Request to create a new task."""
     config_path: Optional[str] = Field(None, description="Path to YAML config file")
     config_content: Optional[str] = Field(None, description="YAML config content")
-    pricing_path: Optional[str] = Field(None, description="Path to pricing file")
     run_id: Optional[str] = Field(None, description="Optional run ID")
     auto_start: bool = Field(True, description="Auto start task after creation")
 
@@ -83,6 +91,7 @@ class QuickReportResponse(BaseModel):
     dimension_scores: Dict[str, int]
     metrics: Dict[str, Any]
     executor_summary: List[Dict[str, Any]]
+    cost_analysis: Optional[Dict[str, Any]] = None
     alerts: List[Dict[str, Any]]
     recommendations: List[Dict[str, Any]]
 
@@ -131,7 +140,6 @@ async def create_task(
         task_info = service.create_task(
             config_path=request.config_path,
             config_content=request.config_content,
-            pricing_path=request.pricing_path,
             run_id=request.run_id,
         )
 
@@ -254,14 +262,30 @@ async def get_task_stats(run_id: str):
     summary="Get quick report",
 )
 async def get_quick_report(run_id: str):
-    """Get quick report for a completed task."""
+    """Get quick report for a completed task.
+
+    This endpoint always recalculates the report from the latest database data.
+    No caching is applied to ensure fresh results on each request.
+    """
     service = get_service()
+    # Always recalculate report from database - no caching
     report = service.get_quick_report(run_id)
 
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    return QuickReportResponse(**report)
+    from fastapi import Response
+    response = QuickReportResponse(**report)
+    # Add headers to prevent client-side caching
+    return Response(
+        content=response.model_dump_json(),
+        media_type="application/json",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
 
 
 @router.post(
@@ -284,6 +308,82 @@ async def cancel_task(run_id: str):
         run_id=run_id,
         status=TaskStatus.CANCELLED,
         message="Task cancelled",
+    )
+
+
+@router.post(
+    "/{run_id}/pause",
+    response_model=TaskResponse,
+    summary="Pause a running task",
+)
+async def pause_task(run_id: str):
+    """Pause a running task.
+
+    The pause is graceful - in-flight requests will complete before
+    the task enters paused state.
+    """
+    service = get_service()
+    success = service.pause_task(run_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be paused (not found or not running)",
+        )
+
+    return TaskResponse(
+        run_id=run_id,
+        status=TaskStatus.PAUSED,
+        message="Task pause requested",
+    )
+
+
+@router.post(
+    "/{run_id}/resume",
+    response_model=TaskResponse,
+    summary="Resume a paused task",
+)
+async def resume_task(run_id: str):
+    """Resume a paused task."""
+    service = get_service()
+    success = service.resume_task(run_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be resumed (not found or not paused)",
+        )
+
+    return TaskResponse(
+        run_id=run_id,
+        status=TaskStatus.RUNNING,
+        message="Task resumed",
+    )
+
+
+@router.post(
+    "/{run_id}/stop",
+    response_model=TaskResponse,
+    summary="Stop a task (not recoverable)",
+)
+async def stop_task(run_id: str):
+    """Stop a running or paused task.
+
+    This is equivalent to cancel and is not recoverable.
+    """
+    service = get_service()
+    success = service.stop_task(run_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be stopped (not found or already completed)",
+        )
+
+    return TaskResponse(
+        run_id=run_id,
+        status=TaskStatus.CANCELLED,
+        message="Task stopped",
     )
 
 
@@ -429,4 +529,404 @@ async def test_run(request: TestRunRequest = Body(...)):
         return TestRunResponse(
             success=False,
             error=str(e),
+        )
+
+
+# ==================== Export & Pricing APIs ====================
+
+class CurrentPriceResponse(BaseModel):
+    """Response for current price query."""
+    provider: str
+    model: str
+    input_price: float  # CNY per million tokens
+    output_price: float  # CNY per million tokens
+    cache_read_price: float = 0.0
+    cache_write_price: float = 0.0
+    currency: str = "CNY"
+
+
+def get_storage() -> Storage:
+    """Get storage instance."""
+    runtime = load_runtime_config()
+    return Storage(str(runtime.db_path))
+
+
+def get_pricing_service() -> PricingService:
+    """Get pricing service instance."""
+    runtime = load_runtime_config()
+    return PricingService(str(runtime.db_path))
+
+
+@router.get(
+    "/pricing/current",
+    response_model=CurrentPriceResponse,
+    summary="Get current price for provider/model",
+)
+async def get_current_price(
+    provider: str,
+    model: str,
+):
+    """Get the current effective price for a provider/model combination.
+
+    This returns the latest pricing from the pricing_history table.
+    """
+    pricing_service = get_pricing_service()
+    price_info = pricing_service.get_current_price(provider, model)
+
+    return CurrentPriceResponse(
+        provider=price_info.provider,
+        model=price_info.model,
+        input_price=price_info.input_price,
+        output_price=price_info.output_price,
+        cache_read_price=price_info.cache_read_price,
+        cache_write_price=price_info.cache_write_price,
+        currency=price_info.currency,
+    )
+
+
+@router.get(
+    "/pricing/batch",
+    response_model=List[CurrentPriceResponse],
+    summary="Get current prices for multiple provider/models",
+)
+async def get_current_prices_batch(
+    providers: Optional[str] = None,  # Comma-separated list
+    models: Optional[str] = None,  # Comma-separated list
+):
+    """Get current prices for multiple provider/model combinations.
+
+    If no filters provided, returns all available prices.
+    """
+    storage = get_storage()
+    provider_list = providers.split(",") if providers else None
+    model_list = models.split(",") if models else None
+
+    # Get all provider/model combinations with latest pricing
+    all_prices = storage.get_providers_models()
+
+    # Filter if needed
+    if provider_list:
+        all_prices = [p for p in all_prices if p["provider"] in provider_list]
+    if model_list:
+        all_prices = [p for p in all_prices if p["model"] in model_list]
+
+    return [
+        CurrentPriceResponse(
+            provider=p["provider"],
+            model=p["model"],
+            input_price=p["input_price"],
+            output_price=p["output_price"],
+            currency="CNY",
+        )
+        for p in all_prices
+    ]
+
+
+@router.get(
+    "/{run_id}/export",
+    summary="Export task results",
+)
+async def export_task_results(
+    run_id: str,
+    format: str = "jsonl",  # jsonl, csv
+):
+    """Export task execution results in various formats.
+
+    Supported formats:
+    - jsonl: JSON Lines format (default), one record per line
+    - csv: Comma-separated values format
+
+    The export includes:
+    - Input/output content
+    - Token usage
+    - Timing metrics (TTFT, total time)
+    - Cost information
+    - Price snapshots
+    """
+    storage = get_storage()
+    records = list(storage.fetch_run_records(run_id))
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No records found for this run")
+
+    if format.lower() == "csv":
+        # Generate CSV
+        output = io.StringIO()
+        fieldnames = [
+            "dataset_row_id",
+            "provider",
+            "model",
+            "status",
+            "input",
+            "output",
+            "reasoning",
+            "qtokens",
+            "atokens",
+            "ctokens",
+            "ttft_ms",
+            "total_time_ms",
+            "prompt_cost",
+            "completion_cost",
+            "cache_cost",
+            "total_cost",
+            "currency",
+            "input_price_snapshot",
+            "output_price_snapshot",
+            "cache_price_snapshot",
+            "created_at",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for record in records:
+            # Extract input messages text
+            input_text = ""
+            try:
+                request_params = record.request_params or {}
+                messages = request_params.get("messages", [])
+                if messages:
+                    input_text = "\n".join(
+                        f"{m.get('role', '')}: {m.get('content', '')}"
+                        for m in messages
+                    )
+            except Exception:
+                pass
+
+            # Extract output content
+            output_text = "".join(record.content) if record.content else ""
+
+            # Extract reasoning
+            reasoning_text = "".join(record.reasoning) if record.reasoning else ""
+
+            writer.writerow({
+                "dataset_row_id": record.dataset_row_id,
+                "provider": record.provider,
+                "model": record.model,
+                "status": record.status,
+                "input": input_text,
+                "output": output_text,
+                "reasoning": reasoning_text,
+                "qtokens": record.qtokens,
+                "atokens": record.atokens,
+                "ctokens": record.ctokens,
+                "ttft_ms": record.first_resp_time,
+                "total_time_ms": record.last_resp_time,
+                "prompt_cost": round(record.prompt_cost, 6),
+                "completion_cost": round(record.completion_cost, 6),
+                "cache_cost": round(record.cache_cost, 6),
+                "total_cost": round(record.total_cost, 6),
+                "currency": record.currency,
+                "input_price_snapshot": getattr(record, "input_price_snapshot", 0.0),
+                "output_price_snapshot": getattr(record, "output_price_snapshot", 0.0),
+                "cache_price_snapshot": getattr(record, "cache_price_snapshot", 0.0),
+                "created_at": record.created_at,
+            })
+
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={run_id}_results.csv",
+            },
+        )
+
+    else:  # jsonl (default)
+        def generate_jsonl():
+            """Generate JSONL output incrementally."""
+            for record in records:
+                # Extract input messages text
+                input_text = ""
+                input_messages = []
+                try:
+                    request_params = record.request_params or {}
+                    messages = request_params.get("messages", [])
+                    input_messages = messages
+                    if messages:
+                        input_text = "\n".join(
+                            f"{m.get('role', '')}: {m.get('content', '')}"
+                            for m in messages
+                        )
+                except Exception:
+                    pass
+
+                # Extract output content
+                output_text = "".join(record.content) if record.content else ""
+
+                # Extract reasoning
+                reasoning_text = "".join(record.reasoning) if record.reasoning else ""
+
+                export_record = {
+                    "dataset_row_id": record.dataset_row_id,
+                    "input": input_text,
+                    "input_messages": input_messages,
+                    "output": output_text,
+                    "reasoning": reasoning_text,
+                    "qtokens": record.qtokens,
+                    "atokens": record.atokens,
+                    "ctokens": record.ctokens,
+                    "ttft_ms": record.first_resp_time,
+                    "total_time_ms": record.last_resp_time,
+                    "cost": record.total_cost,
+                    "currency": record.currency,
+                    "model": record.model,
+                    "provider": record.provider,
+                    "status": record.status,
+                    "created_at": record.created_at,
+                    # Price snapshots
+                    "input_price_snapshot": getattr(record, "input_price_snapshot", 0.0),
+                    "output_price_snapshot": getattr(record, "output_price_snapshot", 0.0),
+                    "cache_price_snapshot": getattr(record, "cache_price_snapshot", 0.0),
+                }
+                yield json.dumps(export_record, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(
+            generate_jsonl(),
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": f"attachment; filename={run_id}_results.jsonl",
+            },
+        )
+
+
+@router.post(
+    "/export/batch",
+    summary="Export multiple tasks results",
+)
+async def export_batch_results(
+    run_ids: List[str] = Body(..., description="List of run IDs to export"),
+    format: str = "jsonl",
+):
+    """Export results from multiple tasks merged together.
+
+    This endpoint combines results from multiple runs into a single export file.
+    Each record includes a "run_id" field to identify the source task.
+    """
+    storage = get_storage()
+    all_records = []
+
+    for run_id in run_ids:
+        records = list(storage.fetch_run_records(run_id))
+        all_records.extend(records)
+
+    if not all_records:
+        raise HTTPException(status_code=404, detail="No records found for the specified runs")
+
+    if format.lower() == "csv":
+        # Generate CSV
+        output = io.StringIO()
+        fieldnames = [
+            "run_id",
+            "dataset_row_id",
+            "provider",
+            "model",
+            "status",
+            "input",
+            "output",
+            "reasoning",
+            "qtokens",
+            "atokens",
+            "ctokens",
+            "ttft_ms",
+            "total_time_ms",
+            "total_cost",
+            "currency",
+            "created_at",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for record in all_records:
+            # Extract input messages text
+            input_text = ""
+            try:
+                request_params = record.request_params or {}
+                messages = request_params.get("messages", [])
+                if messages:
+                    input_text = "\n".join(
+                        f"{m.get('role', '')}: {m.get('content', '')}"
+                        for m in messages
+                    )
+            except Exception:
+                pass
+
+            output_text = "".join(record.content) if record.content else ""
+            reasoning_text = "".join(record.reasoning) if record.reasoning else ""
+
+            writer.writerow({
+                "run_id": record.run_id,
+                "dataset_row_id": record.dataset_row_id,
+                "provider": record.provider,
+                "model": record.model,
+                "status": record.status,
+                "input": input_text,
+                "output": output_text,
+                "reasoning": reasoning_text,
+                "qtokens": record.qtokens,
+                "atokens": record.atokens,
+                "ctokens": record.ctokens,
+                "ttft_ms": record.first_resp_time,
+                "total_time_ms": record.last_resp_time,
+                "total_cost": round(record.total_cost, 6),
+                "currency": record.currency,
+                "created_at": record.created_at,
+            })
+
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=batch_results.csv",
+            },
+        )
+
+    else:  # jsonl (default)
+        def generate_jsonl():
+            """Generate JSONL output incrementally."""
+            for record in all_records:
+                input_text = ""
+                input_messages = []
+                try:
+                    request_params = record.request_params or {}
+                    messages = request_params.get("messages", [])
+                    input_messages = messages
+                    if messages:
+                        input_text = "\n".join(
+                            f"{m.get('role', '')}: {m.get('content', '')}"
+                            for m in messages
+                        )
+                except Exception:
+                    pass
+
+                output_text = "".join(record.content) if record.content else ""
+                reasoning_text = "".join(record.reasoning) if record.reasoning else ""
+
+                export_record = {
+                    "run_id": record.run_id,
+                    "dataset_row_id": record.dataset_row_id,
+                    "input": input_text,
+                    "input_messages": input_messages,
+                    "output": output_text,
+                    "reasoning": reasoning_text,
+                    "qtokens": record.qtokens,
+                    "atokens": record.atokens,
+                    "ctokens": record.ctokens,
+                    "ttft_ms": record.first_resp_time,
+                    "total_time_ms": record.last_resp_time,
+                    "cost": record.total_cost,
+                    "currency": record.currency,
+                    "model": record.model,
+                    "provider": record.provider,
+                    "status": record.status,
+                    "created_at": record.created_at,
+                }
+                yield json.dumps(export_record, ensure_ascii=False) + "\n"
+
+        return StreamingResponse(
+            generate_jsonl(),
+            media_type="application/x-ndjson",
+            headers={
+                "Content-Disposition": "attachment; filename=batch_results.jsonl",
+            },
         )

@@ -99,6 +99,9 @@ class ConnectionManager:
         current_cost: float = 0.0,
         currency: str = "CNY",
         status: str = "running",
+        current_rate: float = 0.0,
+        concurrency: int = 1,
+        paused_at: Optional[datetime] = None,
     ):
         """Broadcast progress update for a run.
 
@@ -114,6 +117,9 @@ class ConnectionManager:
             current_cost: Current total cost.
             currency: Currency code.
             status: Current task status.
+            current_rate: Current request rate (requests/second).
+            concurrency: Current concurrency level.
+            paused_at: When the task was paused.
         """
         message = {
             "type": "progress",
@@ -130,6 +136,9 @@ class ConnectionManager:
                 "current_cost": current_cost,
                 "currency": currency,
                 "status": status,
+                "current_rate": current_rate,
+                "concurrency": concurrency,
+                "paused_at": paused_at.isoformat() if paused_at else None,
             },
         }
         await self.broadcast_to_run(run_id, message)

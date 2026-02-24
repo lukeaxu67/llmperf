@@ -37,8 +37,8 @@ export default function DatasetSelector() {
   const fetchDatasets = async () => {
     setLoading(true)
     try {
-      const response = await datasetApi.list()
-      setDatasets(response as unknown as Dataset[] || [])
+      const response = await datasetApi.list() as any
+      setDatasets(response?.datasets || [])
     } catch (error) {
       console.error('Failed to fetch datasets:', error)
     } finally {
@@ -49,8 +49,8 @@ export default function DatasetSelector() {
   const fetchPreview = async (name: string) => {
     setLoadingPreview(true)
     try {
-      const response = await datasetApi.get(name, 5) as any
-      setPreviewData(response?.records || response || [])
+      const response = await datasetApi.preview(name, 5) as any
+      setPreviewData(response?.records || [])
     } catch (error) {
       console.error('Failed to fetch preview:', error)
       setPreviewData([])
@@ -111,12 +111,12 @@ export default function DatasetSelector() {
                     description={
                       <Space size="large">
                         <Text type="secondary">
-                          {dataset.record_count} 条记录
+                          {dataset.record_count || dataset.row_count || 0} 条记录
                         </Text>
                         <Text type="secondary">
-                          {(dataset.size / 1024).toFixed(1)} KB
+                          {dataset.size ? ((dataset.size || 0) / 1024).toFixed(1) : '0'} KB
                         </Text>
-                        <Tag>{dataset.format.toUpperCase()}</Tag>
+                        <Tag>{(dataset.format || 'jsonl').toUpperCase()}</Tag>
                       </Space>
                     }
                   />

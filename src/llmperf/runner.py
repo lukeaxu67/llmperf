@@ -23,7 +23,7 @@ class RunManager:
         config: RunConfig,
         *,
         config_path: str,
-        pricing_path: Optional[str],
+        pricing_path: Optional[str] = None,
         run_id: str | None = None,
     ):
         self.config = config
@@ -38,19 +38,8 @@ class RunManager:
         self.price_catalog = PriceCatalog(list(config.pricing))
 
         self.config_content = read_text_file(config_path)
-        self.pricing_file_path = pricing_path
-        if pricing_path:
-            self.pricing_content = read_text_file(pricing_path)
-        elif config.pricing:
-            import yaml
-
-            self.pricing_content = yaml.safe_dump(
-                {"pricing": [entry.model_dump() for entry in config.pricing]},
-                allow_unicode=True,
-                sort_keys=False,
-            )
-        else:
-            self.pricing_content = ""
+        # pricing_path is kept for backward compatibility but no longer used
+        # Prices are now fetched automatically from pricing_history table
 
         runtime = load_runtime_config()
         self.db_path = config.db_path or str(runtime.db_path)
@@ -60,8 +49,6 @@ class RunManager:
             config,
             config_path=config_path,
             config_content=self.config_content,
-            pricing_path=self.pricing_file_path,
-            pricing_content=self.pricing_content,
         )
 
     def run(self) -> str:
@@ -110,12 +97,12 @@ class RunManager:
 def execute_from_yaml(
     config_path: str,
     *,
-    pricing_path: Optional[str] = None,
+    pricing_path: Optional[str] = None,  # Kept for backward compatibility, no longer used
     config: Optional[RunConfig] = None,
     run_id: str | None = None,
 ) -> str:
     cfg = config or load_config(config_path)
-    manager = RunManager(cfg, config_path=config_path, pricing_path=pricing_path, run_id=run_id)
+    manager = RunManager(cfg, config_path=config_path, pricing_path=None, run_id=run_id)
     try:
         return manager.run()
     except KeyboardInterrupt:

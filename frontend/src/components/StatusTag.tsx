@@ -5,9 +5,10 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   StopOutlined,
+  PauseCircleOutlined,
 } from '@ant-design/icons'
 
-type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+type TaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 interface StatusTagProps {
   status: TaskStatus
@@ -16,6 +17,7 @@ interface StatusTagProps {
 const statusConfig: Record<TaskStatus, { color: string; icon: React.ReactNode; text: string }> = {
   pending: { color: 'warning', icon: <ClockCircleOutlined />, text: '等待中' },
   running: { color: 'processing', icon: <LoadingOutlined spin />, text: '运行中' },
+  paused: { color: 'warning', icon: <PauseCircleOutlined />, text: '已暂停' },
   completed: { color: 'success', icon: <CheckCircleOutlined />, text: '已完成' },
   failed: { color: 'error', icon: <CloseCircleOutlined />, text: '失败' },
   cancelled: { color: 'default', icon: <StopOutlined />, text: '已取消' },

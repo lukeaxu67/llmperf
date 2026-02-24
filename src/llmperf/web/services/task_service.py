@@ -26,6 +26,7 @@ class TaskStatus(str, Enum):
     """Status of a task."""
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -46,6 +47,7 @@ class TaskProgress:
     current_cost: float = 0.0
     currency: str = "CNY"
     started_at: Optional[datetime] = None
+    paused_duration_seconds: float = 0.0  # Total time spent paused
 
 
 @dataclass
@@ -76,6 +78,8 @@ class TaskService:
         self._tasks: Dict[str, TaskInfo] = {}
         self._progress: Dict[str, TaskProgress] = {}
         self._cancel_events: Dict[str, threading.Event] = {}
+        self._pause_events: Dict[str, threading.Event] = {}  # Events for pause signaling
+        self._resume_events: Dict[str, threading.Event] = {}  # Events for resume signaling
         self._config_contents: Dict[str, str] = {}  # Store config content for tasks
         self._lock = threading.Lock()
 
@@ -87,7 +91,6 @@ class TaskService:
         self,
         config_path: Optional[str] = None,
         config_content: Optional[str] = None,
-        pricing_path: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> TaskInfo:
         """Create a new task.
@@ -95,7 +98,6 @@ class TaskService:
         Args:
             config_path: Path to YAML config file.
             config_content: YAML config content (used if config_path is None).
-            pricing_path: Path to pricing file.
             run_id: Optional run ID.
 
         Returns:
@@ -197,9 +199,13 @@ class TaskService:
         except Exception as e:
             logger.warning("Failed to get dataset total: %s", e)
 
-        # Create cancel event
+        # Create control events
         cancel_event = threading.Event()
+        pause_event = threading.Event()
+        resume_event = threading.Event()
         self._cancel_events[run_id] = cancel_event
+        self._pause_events[run_id] = pause_event
+        self._resume_events[run_id] = resume_event
 
         try:
             # Load config
@@ -278,8 +284,10 @@ class TaskService:
                 progress.status = TaskStatus.FAILED
 
         finally:
-            # Cleanup cancel event
+            # Cleanup control events
             self._cancel_events.pop(run_id, None)
+            self._pause_events.pop(run_id, None)
+            self._resume_events.pop(run_id, None)
 
             # Cleanup temp config file
             if temp_config_path:
@@ -307,40 +315,93 @@ class TaskService:
         if not progress or not progress.started_at:
             return
 
+        pause_event = self._pause_events.get(run_id)
+        resume_event = self._resume_events.get(run_id)
+        last_completed_count = 0
+        last_update_time = datetime.now()
+
         while not cancel_event.is_set():
             try:
+                # Check for pause request
+                if pause_event and pause_event.is_set() and progress.status == TaskStatus.RUNNING:
+                    # Transition to paused state
+                    task_info = self._tasks.get(run_id)
+                    if task_info:
+                        task_info.status = TaskStatus.PAUSED
+                    progress.status = TaskStatus.PAUSED
+                    progress.paused_at = datetime.now()
+
+                    # Broadcast status change
+                    asyncio.run(self._broadcast_status(run_id))
+                    asyncio.run(self._broadcast_progress(run_id))
+
+                    # Wait for resume or cancel
+                    while pause_event.is_set() and not cancel_event.is_set():
+                        time.sleep(0.5)
+
+                    # Check if we were cancelled while paused
+                    if cancel_event.is_set():
+                        break
+
+                    # Resume - update status
+                    if task_info:
+                        task_info.status = TaskStatus.RUNNING
+                    progress.status = TaskStatus.RUNNING
+
+                    # Calculate paused duration
+                    if progress.paused_at:
+                        paused_duration = (datetime.now() - progress.paused_at).total_seconds()
+                        progress.paused_duration_seconds += paused_duration
+                        progress.paused_at = None
+
+                    # Broadcast resume
+                    asyncio.run(self._broadcast_status(run_id))
+
                 # Check if task has completed/failed/cancelled - exit loop if so
                 task_info = self._tasks.get(run_id)
                 if task_info and task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
                     logger.info("Task %s finished with status %s, stopping progress monitor", run_id, task_info.status.value)
                     break
 
-                # Fetch current stats from database
-                records = list(self._storage.fetch_run_records(run_id))
+                # Only fetch stats and update if not paused
+                if progress.status != TaskStatus.PAUSED:
+                    # Fetch current stats from database
+                    records = list(self._storage.fetch_run_records(run_id))
 
-                if records:
-                    total = len(records)
-                    success_count = sum(1 for r in records if r.status == 200)
-                    error_count = total - success_count
-                    total_cost = sum(r.total_cost for r in records)
+                    if records:
+                        total = len(records)
+                        success_count = sum(1 for r in records if r.status == 200)
+                        error_count = total - success_count
+                        total_cost = sum(r.total_cost for r in records)
 
-                    progress.completed = total
-                    progress.success_count = success_count
-                    progress.error_count = error_count
-                    progress.current_cost = total_cost
-                    progress.currency = records[0].currency if records else "CNY"
+                        progress.completed = total
+                        progress.success_count = success_count
+                        progress.error_count = error_count
+                        progress.current_cost = total_cost
+                        progress.currency = records[0].currency if records else "CNY"
 
-                    # Calculate progress percent if we have total
-                    if progress.total and progress.total > 0:
-                        progress.progress_percent = min(100.0, (total / progress.total) * 100)
+                        # Calculate progress percent if we have total
+                        if progress.total and progress.total > 0:
+                            progress.progress_percent = min(100.0, (total / progress.total) * 100)
 
-                    # Calculate elapsed time only if still running
-                    if progress.status == TaskStatus.RUNNING:
-                        elapsed = (datetime.now() - progress.started_at).total_seconds()
-                        progress.elapsed_seconds = elapsed
+                        # Calculate elapsed time only if still running
+                        if progress.status == TaskStatus.RUNNING:
+                            elapsed = (datetime.now() - progress.started_at).total_seconds()
+                            # Subtract paused duration
+                            elapsed = elapsed - progress.paused_duration_seconds
+                            progress.elapsed_seconds = max(0, elapsed)
 
-                    # Broadcast progress update
-                    asyncio.run(self._broadcast_progress(run_id))
+                            # Calculate current rate (requests per second)
+                            now = datetime.now()
+                            time_delta = (now - last_update_time).total_seconds()
+                            if time_delta > 0:
+                                completed_delta = total - last_completed_count
+                                progress.current_rate = completed_delta / time_delta
+                            last_update_time = now
+                            last_completed_count = total
+
+                        # Broadcast progress update
+                        asyncio.run(self._broadcast_progress(run_id))
 
                 time.sleep(2)  # Poll every 2 seconds
 
@@ -374,6 +435,9 @@ class TaskService:
                 current_cost=progress.current_cost,
                 currency=progress.currency,
                 status=progress.status.value,
+                current_rate=progress.current_rate,
+                concurrency=progress.concurrency,
+                paused_at=progress.paused_at,
             )
         except Exception as e:
             logger.warning("Failed to broadcast progress: %s", e)
@@ -528,8 +592,14 @@ class TaskService:
         if not task_info:
             return False
 
-        if task_info.status not in (TaskStatus.PENDING, TaskStatus.RUNNING):
+        if task_info.status not in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.PAUSED):
             return False
+
+        # Clear pause event if paused to allow cancellation
+        if task_info.status == TaskStatus.PAUSED:
+            pause_event = self._pause_events.get(run_id)
+            if pause_event:
+                pause_event.clear()
 
         # Set cancel event
         cancel_event = self._cancel_events.get(run_id)
@@ -544,7 +614,90 @@ class TaskService:
         if progress:
             progress.status = TaskStatus.CANCELLED
 
+        # Broadcast status change
+        asyncio.run(self._broadcast_status(run_id))
+
         return True
+
+    def pause_task(self, run_id: str) -> bool:
+        """Pause a running task.
+
+        The pause is graceful - the task will complete any in-flight requests
+        before pausing. Progress monitoring will detect the pause and stop
+        polling until resume is called.
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            True if paused, False if not pausable.
+        """
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            return False
+
+        if task_info.status != TaskStatus.RUNNING:
+            return False
+
+        # Set pause event
+        pause_event = self._pause_events.get(run_id)
+        if pause_event:
+            pause_event.set()
+
+        # Note: Actual status change happens in _monitor_progress
+        # to ensure graceful pause
+        logger.info("Pause requested for task %s", run_id)
+
+        # Broadcast that pause was requested
+        asyncio.run(self._broadcast_status(run_id))
+
+        return True
+
+    def resume_task(self, run_id: str) -> bool:
+        """Resume a paused task.
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            True if resumed, False if not resumable.
+        """
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            return False
+
+        if task_info.status != TaskStatus.PAUSED:
+            return False
+
+        # Clear pause event to allow resumption
+        pause_event = self._pause_events.get(run_id)
+        if pause_event:
+            pause_event.clear()
+
+        # Set resume event
+        resume_event = self._resume_events.get(run_id)
+        if resume_event:
+            resume_event.set()
+
+        # Note: Actual status change happens in _monitor_progress
+        logger.info("Resume requested for task %s", run_id)
+
+        # Broadcast that resume was requested
+        asyncio.run(self._broadcast_status(run_id))
+
+        return True
+
+    def stop_task(self, run_id: str) -> bool:
+        """Stop a task (alias for cancel, not recoverable).
+
+        Args:
+            run_id: The run ID.
+
+        Returns:
+            True if stopped, False if not stoppable.
+        """
+        # Stop is the same as cancel - not recoverable
+        return self.cancel_task(run_id)
 
     def retry_task(self, run_id: str) -> Optional[TaskInfo]:
         """Retry a failed task.
@@ -582,6 +735,13 @@ class TaskService:
                 del self._progress[run_id]
             if run_id in self._config_contents:
                 del self._config_contents[run_id]
+            # Also cleanup control events if exist
+            if run_id in self._cancel_events:
+                del self._cancel_events[run_id]
+            if run_id in self._pause_events:
+                del self._pause_events[run_id]
+            if run_id in self._resume_events:
+                del self._resume_events[run_id]
             return True
 
     def get_stats(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -676,6 +836,9 @@ class TaskService:
         # Get executor summary
         executor_summary = self._get_executor_summary(run_id)
 
+        # Calculate cost analysis
+        cost_analysis = self._calculate_cost_analysis(run_id, executor_summary, stats)
+
         # Calculate duration
         duration_seconds = 0
         if task_info and task_info.started_at and task_info.completed_at:
@@ -706,6 +869,7 @@ class TaskService:
                 "total_output_tokens": stats.get("total_output_tokens", 0),
             },
             "executor_summary": executor_summary,
+            "cost_analysis": cost_analysis,
             "alerts": alerts,
             "recommendations": recommendations,
         }
@@ -905,6 +1069,62 @@ class TaskService:
 
         return recommendations
 
+    def _calculate_cost_analysis(
+        self,
+        run_id: str,
+        executor_summary: List[Dict[str, Any]],
+        stats: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Calculate cost analysis by executor."""
+        records = list(self._storage.fetch_run_records(run_id))
+
+        if not records:
+            return {
+                "total_cost": 0,
+                "currency": "CNY",
+                "by_executor": [],
+            }
+
+        total_cost = stats.get("total_cost", 0)
+        currency = stats.get("currency", "CNY")
+
+        # Group by executor for cost breakdown
+        executor_costs: Dict[str, Dict[str, Any]] = {}
+        for r in records:
+            exec_id = r.executor_id or "default"
+            if exec_id not in executor_costs:
+                executor_costs[exec_id] = {
+                    "cost": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "request_count": 0,
+                }
+            executor_costs[exec_id]["cost"] += r.total_cost
+            executor_costs[exec_id]["input_tokens"] += r.qtokens
+            executor_costs[exec_id]["output_tokens"] += r.atokens
+            executor_costs[exec_id]["request_count"] += 1
+
+        by_executor = []
+        for exec_id, cost_data in executor_costs.items():
+            avg_cost = cost_data["cost"] / cost_data["request_count"] if cost_data["request_count"] > 0 else 0
+            by_executor.append({
+                "executor": exec_id,
+                "cost": round(cost_data["cost"], 6),
+                "input_tokens": cost_data["input_tokens"],
+                "output_tokens": cost_data["output_tokens"],
+                "request_count": cost_data["request_count"],
+                "avg_cost_per_request": round(avg_cost, 6),
+            })
+
+        # Sort by cost descending
+        by_executor.sort(key=lambda x: x["cost"], reverse=True)
+
+        return {
+            "total_cost": round(total_cost, 6),
+            "currency": currency,
+            "by_executor": by_executor,
+        }
+
     def _get_executor_summary(self, run_id: str) -> List[Dict[str, Any]]:
         """Get summary statistics by executor."""
         records = list(self._storage.fetch_run_records(run_id))
@@ -917,19 +1137,32 @@ class TaskService:
                 executors[exec_id] = []
             executors[exec_id].append(r)
 
+        def percentile(lst, p):
+            """Calculate percentile of a list."""
+            if not lst:
+                return 0
+            sorted_lst = sorted(lst)
+            k = (len(sorted_lst) - 1) * p / 100
+            f = int(k)
+            c = f + 1 if f + 1 < len(sorted_lst) else f
+            return sorted_lst[f] + (k - f) * (sorted_lst[c] - sorted_lst[f])
+
         summary = []
         for exec_id, exec_records in executors.items():
             total = len(exec_records)
             successful = [r for r in exec_records if r.status == 200]
             ttfts = [r.first_resp_time for r in successful if r.first_resp_time > 0]
             tps_list = [r.token_throughput for r in successful if r.token_throughput > 0]
+            output_tokens = [r.atokens for r in successful]
 
             summary.append({
                 "id": exec_id,
                 "requests": total,
                 "success_rate": len(successful) / total * 100 if total > 0 else 0,
                 "avg_ttft": sum(ttfts) / len(ttfts) if ttfts else 0,
+                "p95_ttft": percentile(ttfts, 95),
                 "avg_tps": sum(tps_list) / len(tps_list) if tps_list else 0,
+                "avg_output_tokens": sum(output_tokens) / len(output_tokens) if output_tokens else 0,
                 "cost": sum(r.total_cost for r in exec_records),
             })
 

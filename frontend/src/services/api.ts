@@ -49,9 +49,10 @@ export default api
 // Types
 export interface Task {
   run_id: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
   config_path?: string
   task_name: string
+  task_type?: 'benchmark' | 'monitoring'
   created_at: string
   started_at?: string
   completed_at?: string
@@ -70,6 +71,8 @@ export interface TaskProgress {
   error_count: number
   current_cost: number
   currency: string
+  current_rate?: number
+  concurrency?: number
 }
 
 export interface TaskStats {
@@ -87,11 +90,18 @@ export interface TaskStats {
 
 export interface Dataset {
   name: string
-  path: string
-  size: number
-  record_count: number
-  format: string
-  encoding: string
+  description?: string
+  file_type: string
+  file_path: string
+  row_count?: number
+  record_count?: number
+  file_size?: number
+  size?: number
+  columns?: string[]
+  created_at?: number
+  updated_at?: number
+  format?: string
+  encoding?: string
 }
 
 export interface ConfigTemplate {
@@ -154,7 +164,7 @@ export const taskApi = {
   get: (runId: string) =>
     api.get<Task>(`/tasks/${runId}`),
 
-  create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean }) =>
+  create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean; task_type?: 'benchmark' | 'monitoring' }) =>
     api.post<Task>('/tasks', data),
 
   getProgress: (runId: string) =>
@@ -169,14 +179,26 @@ export const taskApi = {
   cancel: (runId: string) =>
     api.post(`/tasks/${runId}/cancel`),
 
+  pause: (runId: string) =>
+    api.post(`/tasks/${runId}/pause`),
+
+  resume: (runId: string) =>
+    api.post(`/tasks/${runId}/resume`),
+
+  stop: (runId: string) =>
+    api.post(`/tasks/${runId}/stop`),
+
   retry: (runId: string) =>
     api.post(`/tasks/${runId}/retry`),
 
   delete: (runId: string) =>
     api.delete(`/tasks/${runId}`),
 
-  export: (runId: string, format: string) =>
+  export: (runId: string, format: 'jsonl' | 'csv' | 'html') =>
     api.post(`/tasks/${runId}/export`, { format }),
+
+  exportResults: (runId: string, format: 'jsonl' | 'csv') =>
+    api.get(`/tasks/${runId}/export`, { params: { format }, responseType: 'blob' }),
 }
 
 export const pricingApi = {
@@ -211,14 +233,20 @@ export const pricingApi = {
 
   getTotalCost: () =>
     api.get<TotalCost>('/pricing/cost/total'),
+
+  getCurrentPrice: (provider: string, model: string) =>
+    api.get(`/pricing/current`, { params: { provider, model } }),
 }
 
 export const datasetApi = {
   list: () =>
-    api.get<Dataset[]>('/datasets'),
+    api.get<{ datasets: Dataset[]; total: number }>('/datasets'),
 
-  get: (name: string, limit?: number) =>
-    api.get(`/datasets/${name}`, { params: { limit } }),
+  get: (name: string) =>
+    api.get<Dataset>(`/datasets/${name}`),
+
+  preview: (name: string, limit: number = 10) =>
+    api.get(`/datasets/${name}/preview`, { params: { limit } }),
 
   validate: (file: File) => {
     const formData = new FormData()
@@ -228,11 +256,17 @@ export const datasetApi = {
     })
   },
 
-  upload: (file: File) => {
+  upload: (file: File, onProgress?: (progress: number) => void) => {
     const formData = new FormData()
     formData.append('file', file)
     return api.post('/datasets/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          onProgress(progress)
+        }
+      },
     })
   },
 
@@ -277,4 +311,159 @@ export interface TestRunResponse {
 export const testRunApi = {
   run: (data: TestRunRequest) =>
     api.post<TestRunResponse>('/tasks/test-run', data),
+}
+
+// Extended report types
+export interface DetailedReport {
+  run_id: string
+  task_name: string
+  task_type: 'benchmark' | 'monitoring'
+  completed_at: string | null
+  duration_seconds: number
+  score: number
+  grade: string
+  dimension_scores: {
+    latency: number
+    throughput: number
+    success_rate: number
+    cost: number
+  }
+  metrics: {
+    total_requests: number
+    success_rate: number
+    avg_ttft: number
+    p50_ttft: number
+    p90_ttft: number
+    p95_ttft: number
+    p99_ttft: number
+    avg_tps: number
+    total_cost: number
+    currency: string
+    total_input_tokens: number
+    total_output_tokens: number
+  }
+  executor_summary: Array<{
+    id: string
+    requests: number
+    success_rate: number
+    avg_ttft: number
+    p95_ttft: number
+    avg_tps: number
+    cost: number
+    avg_output_tokens: number
+  }>
+  alerts: Array<{
+    type: string
+    severity: 'info' | 'warning' | 'error'
+    message: string
+    suggestion?: string
+  }>
+  recommendations: Array<{
+    category: 'performance' | 'cost' | 'reliability'
+    title: string
+    description: string
+    impact: 'high' | 'medium' | 'low'
+  }>
+  latency_analysis?: {
+    values: number[]
+    p50: number
+    p90: number
+    p95: number
+    p99: number
+    mean: number
+    std: number
+    cv: number
+    by_executor?: Record<string, {
+      values: number[]
+      p50: number
+      p95: number
+      p99: number
+    }>
+  }
+  token_analysis?: {
+    output_tokens: number[]
+    avg_tokens: number
+    p50: number
+    p90: number
+    by_executor?: Record<string, {
+      values: number[]
+      avg: number
+    }>
+  }
+  time_series?: {
+    timeline: number[]
+    ttft: number[]
+    tps: number[]
+    success_rate?: number[]
+    cost_accumulated?: number[]
+  }
+  time_frame_analysis?: {
+    time_frames: Array<{
+      name: string
+      start_hour: number
+      end_hour: number
+      metrics: {
+        avg_ttft: number
+        avg_total_time: number
+        avg_tps: number
+        success_rate: number
+        request_count: number
+      }
+    }>
+    insights: string[]
+  }
+  error_analysis?: {
+    total_errors: number
+    error_rate: number
+    by_type: Record<string, {
+      count: number
+      rate: number
+      examples: string[]
+    }>
+    by_time?: Array<{
+      time: number
+      error_count: number
+      error_rate: number
+    }>
+  }
+  cost_analysis?: {
+    total_cost: number
+    currency: string
+    by_executor: Array<{
+      executor: string
+      cost: number
+      input_tokens: number
+      output_tokens: number
+      request_count: number
+      avg_cost_per_request: number
+    }>
+    cost_trend?: Array<{
+      time: number
+      accumulated_cost: number
+    }>
+  }
+}
+
+// Extended report API
+export const reportApi = {
+  getDetailed: (runId: string) =>
+    api.get<DetailedReport>(`/tasks/${runId}/detailed-report`),
+
+  getLatencyAnalysis: (runId: string) =>
+    api.get<DetailedReport['latency_analysis']>(`/tasks/${runId}/latency-analysis`),
+
+  getTokenAnalysis: (runId: string) =>
+    api.get<DetailedReport['token_analysis']>(`/tasks/${runId}/token-analysis`),
+
+  getTimeSeries: (runId: string) =>
+    api.get<DetailedReport['time_series']>(`/tasks/${runId}/time-series`),
+
+  getTimeFrameAnalysis: (runId: string) =>
+    api.get<DetailedReport['time_frame_analysis']>(`/tasks/${runId}/time-frame-analysis`),
+
+  getErrorAnalysis: (runId: string) =>
+    api.get<DetailedReport['error_analysis']>(`/tasks/${runId}/error-analysis`),
+
+  getCostAnalysis: (runId: string) =>
+    api.get<DetailedReport['cost_analysis']>(`/tasks/${runId}/cost-analysis`),
 }

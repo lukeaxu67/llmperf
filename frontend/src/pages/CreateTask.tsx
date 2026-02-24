@@ -14,6 +14,9 @@ import {
   message,
   Result,
   Alert,
+  Radio,
+  Row,
+  Col,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -23,6 +26,8 @@ import {
   CheckCircleOutlined,
   PlayCircleOutlined,
   BugOutlined,
+  ExperimentOutlined,
+  MonitorOutlined,
 } from '@ant-design/icons'
 import useTaskFormStore from '@/stores/taskFormStore'
 import { taskApi } from '@/services/api'
@@ -34,7 +39,7 @@ import {
   TestRunModal,
 } from '@/components/taskForm'
 
-const { Title, Paragraph } = Typography
+const { Title, Paragraph, Text } = Typography
 
 const steps = [
   {
@@ -68,6 +73,8 @@ export default function CreateTask() {
     prevStep,
     generateYamlContent,
     reset,
+    taskType,
+    setTaskType,
   } = useTaskFormStore()
 
   const [submitting, setSubmitting] = useState(false)
@@ -132,6 +139,7 @@ export default function CreateTask() {
       const response = await taskApi.create({
         config_content: yamlContent,
         auto_start: true,
+        task_type: taskType,
       }) as any
 
       setCreatedTaskId(response.run_id)
@@ -236,6 +244,52 @@ export default function CreateTask() {
       <Paragraph type="secondary">
         通过分步向导创建基准测试任务
       </Paragraph>
+
+      {/* Task Type Selection */}
+      <Card style={{ marginBottom: 24 }}>
+        <Row gutter={[16, 16]} align="middle">
+          <Col>
+            <Space direction="vertical" size={0}>
+              <Text strong>任务类型</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                选择任务类型以确定测试策略
+              </Text>
+            </Space>
+          </Col>
+          <Col>
+            <Radio.Group
+              value={taskType}
+              onChange={(e) => setTaskType(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="benchmark">
+                <Space>
+                  <ExperimentOutlined />
+                  基准测试
+                </Space>
+              </Radio.Button>
+              <Radio.Button value="monitoring">
+                <Space>
+                  <MonitorOutlined />
+                  持续监控
+                </Space>
+              </Radio.Button>
+            </Radio.Group>
+          </Col>
+          <Col flex="auto">
+            <Alert
+              message={
+                taskType === 'benchmark'
+                  ? '基准测试：对选定模型进行一次性性能测试'
+                  : '持续监控：定期监控模型性能，适用于长期跟踪'
+              }
+              type="info"
+              showIcon
+            />
+          </Col>
+        </Row>
+      </Card>
 
       {/* Steps */}
       <Card style={{ marginBottom: 24 }}>

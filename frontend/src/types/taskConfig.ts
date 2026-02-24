@@ -131,6 +131,7 @@ export interface TaskFormState {
 
   // Metadata
   currentStep: number
+  taskType?: 'benchmark' | 'monitoring'
 }
 
 // Default form state

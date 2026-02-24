@@ -14,17 +14,19 @@ import {
   List,
   Empty,
   Spin,
+  Progress,
 } from 'antd'
 import {
-  UploadOutlined,
   DeleteOutlined,
   EyeOutlined,
   FileTextOutlined,
   DatabaseOutlined,
+  InboxOutlined,
 } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
 import { datasetApi, Dataset } from '@/services/api'
 
+const { Dragger } = Upload
 const { Title, Text, Paragraph } = Typography
 
 export default function Datasets() {
@@ -34,6 +36,7 @@ export default function Datasets() {
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   useEffect(() => {
     fetchDatasets()
@@ -43,7 +46,8 @@ export default function Datasets() {
     setLoading(true)
     try {
       const response = await datasetApi.list() as any
-      setDatasets(response || [])
+      // API returns { datasets: [...], total: number }
+      setDatasets(response?.datasets || [])
     } catch (error: any) {
       message.error(error.message || '获取数据集列表失败')
     } finally {
@@ -55,7 +59,7 @@ export default function Datasets() {
     setPreviewLoading(true)
     setPreviewVisible(true)
     try {
-      const response = await datasetApi.get(name, 20) as any
+      const response = await datasetApi.preview(name, 20) as any
       setPreviewData(response)
     } catch (error: any) {
       message.error(error.message || '获取数据集预览失败')
@@ -79,6 +83,7 @@ export default function Datasets() {
     accept: '.jsonl',
     showUploadList: false,
     beforeUpload: async (file) => {
+      setUploadProgress(0)
       setUploading(true)
       try {
         // Validate first
@@ -88,17 +93,26 @@ export default function Datasets() {
           return false
         }
 
-        // Upload
-        await datasetApi.upload(file)
+        // Upload with progress
+        await datasetApi.upload(file, (progress) => {
+          setUploadProgress(progress)
+        })
         message.success('上传成功')
         fetchDatasets()
+        setUploadProgress(0)
       } catch (error: any) {
         message.error(error.message || '上传失败')
+        setUploadProgress(0)
       } finally {
         setUploading(false)
       }
       return false
     },
+  }
+
+  const draggerProps: UploadProps = {
+    ...uploadProps,
+    multiple: false,
   }
 
   const formatBytes = (bytes: number) => {
@@ -122,22 +136,41 @@ export default function Datasets() {
       ),
     },
     {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      render: (description: string) => description || '-',
+    },
+    {
       title: '记录数',
       dataIndex: 'record_count',
       key: 'record_count',
-      render: (count: number) => <Tag color="blue">{count} 条</Tag>,
+      render: (count: number, record: Dataset) => (
+        <Tag color="blue">{count || record.row_count || 0} 条</Tag>
+      ),
     },
     {
       title: '文件大小',
       dataIndex: 'size',
       key: 'size',
-      render: (size: number) => formatBytes(size),
+      render: (size: number, record: Dataset) => formatBytes(size || record.file_size || 0),
     },
     {
-      title: '格式',
-      dataIndex: 'format',
-      key: 'format',
-      render: (format: string) => <Tag>{format.toUpperCase()}</Tag>,
+      title: '类型',
+      dataIndex: 'file_type',
+      key: 'file_type',
+      render: (fileType: string, record: Dataset) => (
+        <Tag>{(fileType || record.format || 'jsonl').toUpperCase()}</Tag>
+      ),
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (timestamp: number) => {
+        if (!timestamp) return '-'
+        return new Date(timestamp * 1000).toLocaleString('zh-CN')
+      },
     },
     {
       title: '操作',
@@ -167,18 +200,29 @@ export default function Datasets() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>数据集管理</Title>
-        <Upload {...uploadProps}>
-          <Button type="primary" icon={<UploadOutlined />} loading={uploading}>
-            上传数据集
-          </Button>
-        </Upload>
-      </div>
+      <Title level={4} style={{ marginBottom: 16 }}>数据集管理</Title>
 
-      <Paragraph type="secondary">
-        上传 JSONL 格式的测试数据集，每行一个测试用例
-      </Paragraph>
+      {/* Upload Area */}
+      <Card style={{ marginBottom: 24 }}>
+        {uploading && uploadProgress > 0 ? (
+          <div style={{ padding: 24, textAlign: 'center' }}>
+            <Progress percent={uploadProgress} status="active" />
+            <Paragraph type="secondary" style={{ marginTop: 16 }}>
+              正在上传数据集...
+            </Paragraph>
+          </div>
+        ) : (
+          <Dragger {...draggerProps} style={{ padding: 24 }}>
+            <p className="ant-upload-drag-icon">
+              <InboxOutlined style={{ fontSize: 48, color: '#1677ff' }} />
+            </p>
+            <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
+            <p className="ant-upload-hint">
+              支持 JSONL 格式的测试数据集，每行一个测试用例
+            </p>
+          </Dragger>
+        )}
+      </Card>
 
       <Card>
         <Table
@@ -194,7 +238,7 @@ export default function Datasets() {
                 description={
                   <span>
                     <DatabaseOutlined style={{ marginRight: 8 }} />
-                    暂无数据集，点击上方按钮上传
+                    暂无数据集，请上传数据集
                   </span>
                 }
               />
@@ -219,8 +263,8 @@ export default function Datasets() {
           <div>
             <Descriptions size="small" column={3} style={{ marginBottom: 16 }}>
               <Descriptions.Item label="名称">{previewData.name}</Descriptions.Item>
-              <Descriptions.Item label="总记录数">{previewData.total_records}</Descriptions.Item>
-              <Descriptions.Item label="预览数量">{previewData.preview_count}</Descriptions.Item>
+              <Descriptions.Item label="总记录数">{previewData.total_rows}</Descriptions.Item>
+              <Descriptions.Item label="预览数量">{previewData.preview_rows}</Descriptions.Item>
             </Descriptions>
 
             <Title level={5}>数据示例</Title>

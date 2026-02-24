@@ -1,0 +1,83 @@
+# Mock多模型测试配置
+# 使用Mock提供商模拟不同模型的性能表现，无需实际API调用
+
+info: "Mock多模型对比测试"
+task_type: "benchmark"
+
+dataset:
+  source:
+    type: "generator"
+    name: "multi_model_test"
+    config:
+      generator:
+        class_name: "simple_questions"
+        parameters:
+          count: 20  # 生成20个测试问题
+  iterator:
+    mutation_chain: ["identity"]
+
+executors:
+  # 模拟GPT-4类模型（高性能、高延迟）
+  - id: "gpt-4-mock"
+    name: "GPT-4 Mock"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "gpt-4"
+    param:
+      mock_ttft_ms: 1500      # 首次响应时间（毫秒）
+      mock_tokens_per_chunk: 5  # 每次流式返回的token数
+      mock_chunks: 15         # 总共返回的chunk数
+      mock_chunk_interval_ms: 50  # chunk间隔（毫秒）
+
+  # 模拟Claude类模型（平衡性能）
+  - id: "claude-3-mock"
+    name: "Claude 3 Mock"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "claude-3-sonnet"
+    param:
+      mock_ttft_ms: 800
+      mock_tokens_per_chunk: 8
+      mock_chunks: 12
+      mock_chunk_interval_ms: 60
+
+  # 模拟Gemini类模型（快速响应）
+  - id: "gemini-mock"
+    name: "Gemini Pro Mock"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "gemini-pro"
+    param:
+      mock_ttft_ms: 500
+      mock_tokens_per_chunk: 10
+      mock_chunks: 10
+      mock_chunk_interval_ms: 40
+
+  # 模拟轻量级模型（快速、低成本）
+  - id: "lite-mock"
+    name: "Lite Model Mock"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "lite-model"
+    param:
+      mock_ttft_ms: 200
+      mock_tokens_per_chunk: 15
+      mock_chunks: 8
+      mock_chunk_interval_ms: 30
+
+  # 模拟慢速模型（高质量、高延迟）
+  - id: "slow-mock"
+    name: "Slow Model Mock"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "slow-model"
+    param:
+      mock_ttft_ms: 2500
+      mock_tokens_per_chunk: 3
+      mock_chunks: 20
+      mock_chunk_interval_ms: 100

@@ -240,3 +240,61 @@ async def get_total_cost():
     """Get total cost across all runs."""
     storage = get_storage()
     return storage.get_total_cost()
+
+
+class CurrentPriceQueryResponse(BaseModel):
+    """Response for current price query."""
+    provider: str
+    model: str
+    input_price: float  # CNY per million tokens
+    output_price: float  # CNY per million tokens
+    cache_read_price: float = 0.0
+    cache_write_price: float = 0.0
+    currency: str = "CNY"
+    found: bool = True  # Whether pricing was found
+
+
+@router.get(
+    "/current",
+    response_model=CurrentPriceQueryResponse,
+    summary="Get current price for provider/model",
+)
+async def get_current_price(
+    provider: str,
+    model: str,
+):
+    """Get the current effective price for a provider/model combination.
+
+    This returns the latest pricing from the pricing_history table.
+    If no pricing is found, returns default zero pricing with found=False.
+    """
+    storage = get_storage()
+
+    price_record = storage.get_pricing_at_time(
+        provider=provider,
+        model=model,
+        timestamp=int(time.time()),
+    )
+
+    if price_record:
+        return CurrentPriceQueryResponse(
+            provider=provider,
+            model=model,
+            input_price=price_record.input_price,
+            output_price=price_record.output_price,
+            cache_read_price=price_record.cache_read_price,
+            cache_write_price=price_record.cache_write_price,
+            currency="CNY",
+            found=True,
+        )
+    else:
+        return CurrentPriceQueryResponse(
+            provider=provider,
+            model=model,
+            input_price=0.0,
+            output_price=0.0,
+            cache_read_price=0.0,
+            cache_write_price=0.0,
+            currency="CNY",
+            found=False,
+        )

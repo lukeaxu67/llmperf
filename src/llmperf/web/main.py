@@ -31,6 +31,12 @@ def get_task_service() -> TaskService:
     return _task_service
 
 
+def get_dataset_service():
+    """Get or create dataset service instance."""
+    from .services.dataset_service import get_dataset_service as _get
+    return _get()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -39,6 +45,14 @@ async def lifespan(app: FastAPI):
 
     # Initialize services
     get_task_service()
+
+    # Initialize dataset service and scan datasets
+    try:
+        dataset_service = get_dataset_service()
+        scanned = dataset_service.scan()
+        logger.info(f"Dataset service initialized with {len(scanned)} datasets")
+    except Exception as e:
+        logger.warning("Failed to initialize dataset service: %s", e)
 
     # Import notification channels to register them
     try:

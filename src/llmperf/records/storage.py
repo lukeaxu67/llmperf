@@ -55,9 +55,11 @@ class Storage:
         *,
         config_path: str,
         config_content: str,
-        pricing_path: str | None,
-        pricing_content: str,
+        pricing_path: str | None = None,
+        pricing_content: str = "",
     ) -> None:
+        # pricing_path and pricing_content are kept for backward compatibility
+        # but are no longer stored in the database
         with self.db.session() as session:
             session.merge(
                 RunORM(
@@ -67,8 +69,6 @@ class Storage:
                     created_at=int(time.time()),
                     config_path=config_path,
                     config_content=config_content,
-                    pricing_path=pricing_path or "",
-                    pricing_content=pricing_content,
                 )
             )
             session.commit()
@@ -90,6 +90,9 @@ class Storage:
             cache_cost=record.cache_cost,
             total_cost=record.total_cost,
             currency=record.currency,
+            input_price_snapshot=getattr(record, "input_price_snapshot", 0.0),
+            output_price_snapshot=getattr(record, "output_price_snapshot", 0.0),
+            cache_price_snapshot=getattr(record, "cache_price_snapshot", 0.0),
             usage_json=dumps(record.usage),
             request_params_json=dumps(record.request_params),
             action_times=dumps(record.action_times),
@@ -127,6 +130,9 @@ class Storage:
                     cache_cost=getattr(row, "cache_cost", 0.0),
                     total_cost=row.total_cost,
                     currency=row.currency,
+                    input_price_snapshot=getattr(row, "input_price_snapshot", 0.0),
+                    output_price_snapshot=getattr(row, "output_price_snapshot", 0.0),
+                    cache_price_snapshot=getattr(row, "cache_price_snapshot", 0.0),
                     usage=loads(row.usage_json, {}),
                     request_params=loads(getattr(row, "request_params_json", None), {}),
                     action_times=loads(row.action_times, []),
@@ -173,6 +179,9 @@ class Storage:
                     cache_cost=getattr(row, "cache_cost", 0.0),
                     total_cost=row.total_cost,
                     currency=row.currency,
+                    input_price_snapshot=getattr(row, "input_price_snapshot", 0.0),
+                    output_price_snapshot=getattr(row, "output_price_snapshot", 0.0),
+                    cache_price_snapshot=getattr(row, "cache_price_snapshot", 0.0),
                     usage=loads(row.usage_json, {}),
                     request_params=loads(getattr(row, "request_params_json", None), {}),
                     action_times=loads(row.action_times, []),
