@@ -160,6 +160,43 @@ class TaskService:
             progress.status = TaskStatus.RUNNING
             progress.started_at = task_info.started_at
 
+        # Get total records from dataset for progress tracking
+        dataset_total = 0
+        try:
+            import yaml
+            if task_info.config_path:
+                config = load_config(task_info.config_path)
+            elif self._config_contents.get(run_id):
+                config_dict = yaml.safe_load(self._config_contents[run_id])
+                config = RunConfig.model_validate(config_dict)
+            else:
+                config = None
+
+            if config and config.dataset:
+                from llmperf.datasets.dataset_source_registry import create_dataset_source
+                dataset_source = create_dataset_source(config.dataset.source)
+                # Try to get total count
+                if hasattr(dataset_source, '__len__'):
+                    try:
+                        dataset_total = len(dataset_source)
+                    except:
+                        pass
+                if dataset_total == 0:
+                    # Try loading to count
+                    try:
+                        dataset_total = len(list(dataset_source.load()))
+                    except:
+                        pass
+
+                # Account for max_rounds
+                if config.dataset.iterator and config.dataset.iterator.max_rounds:
+                    dataset_total = dataset_total * config.dataset.iterator.max_rounds
+
+            if progress and dataset_total > 0:
+                progress.total = dataset_total
+        except Exception as e:
+            logger.warning("Failed to get dataset total: %s", e)
+
         # Create cancel event
         cancel_event = threading.Event()
         self._cancel_events[run_id] = cancel_event
@@ -217,6 +254,9 @@ class TaskService:
             if progress:
                 progress.status = TaskStatus.COMPLETED
                 progress.progress_percent = 100.0
+                # Fix elapsed_seconds to final value
+                if progress.started_at and task_info.completed_at:
+                    progress.elapsed_seconds = (task_info.completed_at - progress.started_at).total_seconds()
 
             # Calculate and save total cost to database
             try:
@@ -269,6 +309,12 @@ class TaskService:
 
         while not cancel_event.is_set():
             try:
+                # Check if task has completed/failed/cancelled - exit loop if so
+                task_info = self._tasks.get(run_id)
+                if task_info and task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                    logger.info("Task %s finished with status %s, stopping progress monitor", run_id, task_info.status.value)
+                    break
+
                 # Fetch current stats from database
                 records = list(self._storage.fetch_run_records(run_id))
 
@@ -284,9 +330,14 @@ class TaskService:
                     progress.current_cost = total_cost
                     progress.currency = records[0].currency if records else "CNY"
 
-                    # Calculate elapsed time
-                    elapsed = (datetime.now() - progress.started_at).total_seconds()
-                    progress.elapsed_seconds = elapsed
+                    # Calculate progress percent if we have total
+                    if progress.total and progress.total > 0:
+                        progress.progress_percent = min(100.0, (total / progress.total) * 100)
+
+                    # Calculate elapsed time only if still running
+                    if progress.status == TaskStatus.RUNNING:
+                        elapsed = (datetime.now() - progress.started_at).total_seconds()
+                        progress.elapsed_seconds = elapsed
 
                     # Broadcast progress update
                     asyncio.run(self._broadcast_progress(run_id))

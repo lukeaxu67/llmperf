@@ -87,6 +87,21 @@ class QuickReportResponse(BaseModel):
     recommendations: List[Dict[str, Any]]
 
 
+class TestRunRequest(BaseModel):
+    """Request for a test run."""
+    config_content: str = Field(..., description="YAML config content")
+
+
+class TestRunResponse(BaseModel):
+    """Response for a test run."""
+    success: bool
+    duration_ms: float = 0
+    first_token_ms: float = 0
+    tokens_per_second: float = 0
+    response: str = ""
+    error: str = ""
+
+
 def get_service() -> TaskService:
     """Get task service instance."""
     from ..main import get_task_service
@@ -318,3 +333,100 @@ async def delete_task(run_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     return {"message": "Task deleted", "run_id": run_id}
+
+
+@router.post(
+    "/test-run",
+    response_model=TestRunResponse,
+    summary="Run a test with first record only",
+)
+async def test_run(request: TestRunRequest = Body(...)):
+    """Run a test with the first record only, without saving to database.
+
+    This endpoint is useful for validating executor configurations before
+    running a full benchmark task.
+    """
+    import time
+    import yaml
+    from llmperf.config.models import RunConfig
+    from llmperf.executors.base import create_executor
+    from llmperf.providers.base import create_provider
+    from llmperf.datasets.dataset_source_registry import create_dataset_source
+
+    try:
+        # Parse config
+        config_dict = yaml.safe_load(request.config_content)
+        config = RunConfig.model_validate(config_dict)
+
+        if not config.executors:
+            return TestRunResponse(
+                success=False,
+                error="No executors configured",
+            )
+
+        # Get first executor
+        executor_config = config.executors[0]
+
+        # Get first record from dataset
+        dataset_source = create_dataset_source(config.dataset.source)
+        records = list(dataset_source.load())
+        if not records:
+            return TestRunResponse(
+                success=False,
+                error="Dataset is empty",
+            )
+
+        first_record = records[0]
+
+        # Create provider and run single request
+        provider = create_provider(
+            executor_config.type,
+            executor_config.impl or "default",
+            executor_config.type,
+        )
+
+        from llmperf.providers.base import ProviderRequest
+
+        test_request = ProviderRequest(
+            run_id="test-run",
+            executor_id=executor_config.id,
+            dataset_row_id=first_record.id or "test-0",
+            provider=executor_config.type,
+            model=executor_config.model or "unknown",
+            messages=[msg.model_dump() for msg in first_record.messages],
+            options=executor_config.param or {},
+        )
+
+        # Override API settings if provided
+        if executor_config.api_url:
+            test_request.options["api_url"] = executor_config.api_url
+        if executor_config.api_key:
+            test_request.options["api_key"] = executor_config.api_key
+
+        start_time = time.time()
+        record = provider.invoke(test_request)
+        end_time = time.time()
+
+        duration_ms = (end_time - start_time) * 1000
+
+        # Calculate metrics
+        first_token_ms = record.first_resp_time or 0
+        tokens_per_second = 0
+        if record.duration and record.duration > 0 and record.atokens:
+            tokens_per_second = (record.atokens / record.duration) * 1000
+
+        return TestRunResponse(
+            success=record.status == 200,
+            duration_ms=duration_ms,
+            first_token_ms=first_token_ms,
+            tokens_per_second=tokens_per_second,
+            response=record.response or "",
+            error="" if record.status == 200 else f"Request failed with status {record.status}",
+        )
+
+    except Exception as e:
+        logger.exception("Test run failed: %s", e)
+        return TestRunResponse(
+            success=False,
+            error=str(e),
+        )

@@ -1,133 +1,231 @@
+/**
+ * Create Task Page
+ * Step-by-step task creation wizard
+ */
+
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card,
   Button,
+  Steps,
   Space,
   Typography,
   message,
+  Result,
   Alert,
-  List,
-  Divider,
 } from 'antd'
 import {
   ArrowLeftOutlined,
+  DatabaseOutlined,
+  SettingOutlined,
+  ApiOutlined,
+  CheckCircleOutlined,
   PlayCircleOutlined,
-  FileTextOutlined,
+  BugOutlined,
 } from '@ant-design/icons'
-import YamlEditor from '@/components/YamlEditor'
-import { configApi, taskApi } from '@/services/api'
+import useTaskFormStore from '@/stores/taskFormStore'
+import { taskApi } from '@/services/api'
+import {
+  DatasetSelector,
+  ExecutionSettings,
+  ExecutorList,
+  YamlPreview,
+  TestRunModal,
+} from '@/components/taskForm'
 
 const { Title, Paragraph } = Typography
 
-const defaultConfig = `info: "示例任务"
-
-dataset:
-  source:
-    type: "jsonl"
-    name: "demo"
-    config:
-      path: "resource/demo.jsonl"
-  iterator:
-    mutation_chain: ["identity"]
-    max_rounds: 1
-
-executors:
-  - id: "executor-001"
-    name: "测试执行器"
-    type: "mock"
-    impl: "chat"
-    concurrency: 1
-    model: "mock-model"
-`
+const steps = [
+  {
+    title: '数据集',
+    description: '选择数据集和描述',
+    icon: <DatabaseOutlined />,
+  },
+  {
+    title: '执行设置',
+    description: '配置执行轮数和变异',
+    icon: <SettingOutlined />,
+  },
+  {
+    title: '执行器',
+    description: '配置执行器参数',
+    icon: <ApiOutlined />,
+  },
+  {
+    title: '确认',
+    description: '预览并提交',
+    icon: <CheckCircleOutlined />,
+  },
+]
 
 export default function CreateTask() {
   const navigate = useNavigate()
-  const [config, setConfig] = useState(defaultConfig)
-  const [validation, setValidation] = useState<{ valid: boolean; errors: string[]; warnings: string[] } | null>(null)
-  const [templates, setTemplates] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+  const {
+    currentStep,
+    setStep,
+    nextStep,
+    prevStep,
+    generateYamlContent,
+    reset,
+  } = useTaskFormStore()
 
+  const [submitting, setSubmitting] = useState(false)
+  const [yamlValid, setYamlValid] = useState(false)
+  const [testRunOpen, setTestRunOpen] = useState(false)
+  const [createdTaskId, setCreatedTaskId] = useState<string | null>(null)
+
+  // Reset form on mount
   useEffect(() => {
-    fetchTemplates()
+    reset()
   }, [])
 
-  const fetchTemplates = async () => {
-    setLoading(true)
-    try {
-      const response = await configApi.listTemplates() as any
-      setTemplates(response || [])
-    } catch (error) {
-      console.error('Failed to fetch templates:', error)
-    } finally {
-      setLoading(false)
+  // Validate current step before proceeding
+  const canProceed = () => {
+    const { selectedDataset, executors } = useTaskFormStore.getState()
+
+    switch (currentStep) {
+      case 0:
+        if (!selectedDataset) {
+          message.warning('请选择一个数据集')
+          return false
+        }
+        return true
+
+      case 1:
+        return true
+
+      case 2:
+        if (executors.length === 0) {
+          message.warning('请至少添加一个执行器')
+          return false
+        }
+        return true
+
+      case 3:
+        if (!yamlValid) {
+          message.warning('请先验证 YAML 配置')
+          return false
+        }
+        return true
+
+      default:
+        return true
     }
   }
 
-  const handleValidate = async () => {
-    try {
-      const result = await configApi.validate(config) as any
-      setValidation({
-        valid: result.valid,
-        errors: result.errors || [],
-        warnings: result.warnings || [],
-      })
-      if (result.valid) {
-        message.success('配置验证通过')
-      } else {
-        message.error('配置验证失败')
-      }
-    } catch (error: any) {
-      message.error(error.message || '验证失败')
+  const handleNext = () => {
+    if (canProceed()) {
+      nextStep()
     }
   }
 
   const handleSubmit = async () => {
-    // Validate first
-    try {
-      const result = await configApi.validate(config) as any
-      if (!result.valid) {
-        message.error('请先修复配置错误')
-        setValidation({
-          valid: result.valid,
-          errors: result.errors || [],
-          warnings: result.warnings || [],
-        })
-        return
-      }
-    } catch (error: any) {
-      message.error('验证失败: ' + error.message)
+    if (!canProceed()) {
       return
     }
 
+    const yamlContent = generateYamlContent()
     setSubmitting(true)
+
     try {
-      const response = await taskApi.create({ config_content: config }) as any
+      const response = await taskApi.create({
+        config_content: yamlContent,
+        auto_start: true,
+      }) as any
+
+      setCreatedTaskId(response.run_id)
       message.success('任务创建成功')
-      navigate(`/tasks/${response.run_id}`)
     } catch (error: any) {
-      message.error(error.message || '创建失败')
+      message.error(error.message || '创建任务失败')
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleLoadTemplate = async (name: string) => {
-    try {
-      const response = await configApi.getTemplate(name) as any
-      if (response.content) {
-        setConfig(response.content)
-        setValidation(null)
-        message.success(`已加载模板: ${name}`)
-      }
-    } catch (error: any) {
-      message.error(error.message || '加载模板失败')
+  const handleViewTask = () => {
+    if (createdTaskId) {
+      navigate(`/tasks/${createdTaskId}`)
+    }
+  }
+
+  const handleCreateAnother = () => {
+    reset()
+    setCreatedTaskId(null)
+  }
+
+  // Show success result after task creation
+  if (createdTaskId) {
+    return (
+      <div>
+        <div style={{ marginBottom: 16 }}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
+            返回列表
+          </Button>
+        </div>
+
+        <Result
+          status="success"
+          title="任务创建成功"
+          subTitle={`任务 ID: ${createdTaskId}`}
+          extra={[
+            <Button type="primary" key="view" onClick={handleViewTask}>
+              查看任务
+            </Button>,
+            <Button key="another" onClick={handleCreateAnother}>
+              创建新任务
+            </Button>,
+            <Button key="list" onClick={() => navigate('/tasks')}>
+              返回列表
+            </Button>,
+          ]}
+        />
+      </div>
+    )
+  }
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0:
+        return <DatasetSelector />
+
+      case 1:
+        return <ExecutionSettings />
+
+      case 2:
+        return <ExecutorList />
+
+      case 3:
+        return (
+          <div>
+            <YamlPreview onValidChange={setYamlValid} />
+            <Card style={{ marginTop: 16 }}>
+              <Space>
+                <Button
+                  icon={<BugOutlined />}
+                  onClick={() => setTestRunOpen(true)}
+                >
+                  测试运行
+                </Button>
+                <Alert
+                  message="测试运行将使用第一条数据进行单次测试，结果不会保存"
+                  type="info"
+                  showIcon
+                  style={{ display: 'inline-flex' }}
+                />
+              </Space>
+            </Card>
+          </div>
+        )
+
+      default:
+        return null
     }
   }
 
   return (
     <div>
+      {/* Header */}
       <div style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
           返回列表
@@ -136,100 +234,54 @@ export default function CreateTask() {
 
       <Title level={4}>创建任务</Title>
       <Paragraph type="secondary">
-        通过 YAML 配置文件创建新的基准测试任务
+        通过分步向导创建基准测试任务
       </Paragraph>
 
-      <div style={{ display: 'flex', gap: 24 }}>
-        {/* Main Editor */}
-        <div style={{ flex: 1 }}>
-          <Card
-            title="配置编辑器"
-            extra={
-              <Space>
-                <Button onClick={handleValidate}>
-                  验证配置
-                </Button>
-                <Button
-                  type="primary"
-                  icon={<PlayCircleOutlined />}
-                  loading={submitting}
-                  onClick={handleSubmit}
-                >
-                  创建并运行
-                </Button>
-              </Space>
-            }
-          >
-            {validation && !validation.valid && (
-              <Alert
-                message="配置验证错误"
-                description={
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {validation.errors.map((err, i) => (
-                      <li key={i} style={{ color: '#ff4d4f' }}>{err}</li>
-                    ))}
-                  </ul>
-                }
-                type="error"
-                showIcon
-                style={{ marginBottom: 16 }}
-              />
-            )}
+      {/* Steps */}
+      <Card style={{ marginBottom: 24 }}>
+        <Steps current={currentStep} items={steps} onChange={setStep} />
+      </Card>
 
-            {validation && validation.valid && (
-              <Alert
-                message="配置验证通过"
-                type="success"
-                showIcon
-                style={{ marginBottom: 16 }}
-              />
-            )}
-
-            <YamlEditor
-              value={config}
-              onChange={(value) => {
-                setConfig(value)
-                setValidation(null)
-              }}
-              height={500}
-            />
-          </Card>
-        </div>
-
-        {/* Sidebar */}
-        <div style={{ width: 300 }}>
-          <Card title="配置模板" size="small" loading={loading}>
-            <List
-              size="small"
-              dataSource={templates}
-              renderItem={(item) => (
-                <List.Item
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => handleLoadTemplate(item.name)}
-                >
-                  <List.Item.Meta
-                    avatar={<FileTextOutlined />}
-                    title={item.name}
-                    description={item.description || '无描述'}
-                  />
-                </List.Item>
-              )}
-              locale={{ emptyText: '暂无模板' }}
-            />
-          </Card>
-
-          <Divider />
-
-          <Card title="配置说明" size="small">
-            <div style={{ fontSize: 12, color: '#666' }}>
-              <p><strong>info:</strong> 任务描述信息</p>
-              <p><strong>dataset:</strong> 数据集配置</p>
-              <p><strong>executors:</strong> 执行器列表</p>
-              <p><strong>pricing:</strong> 价格配置（可选）</p>
-            </div>
-          </Card>
-        </div>
+      {/* Step Content */}
+      <div style={{ marginBottom: 24 }}>
+        {renderStepContent()}
       </div>
+
+      {/* Navigation */}
+      <Card>
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Button
+            disabled={currentStep === 0}
+            onClick={prevStep}
+          >
+            上一步
+          </Button>
+
+          <Space>
+            {currentStep < steps.length - 1 ? (
+              <Button type="primary" onClick={handleNext}>
+                下一步
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                loading={submitting}
+                onClick={handleSubmit}
+              >
+                创建并运行
+              </Button>
+            )}
+          </Space>
+        </Space>
+      </Card>
+
+      {/* Test Run Modal */}
+      <TestRunModal
+        open={testRunOpen}
+        yamlContent={generateYamlContent()}
+        onClose={() => setTestRunOpen(false)}
+      />
     </div>
   )
 }

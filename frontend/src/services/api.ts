@@ -258,3 +258,23 @@ export const configApi = {
   getPricing: () =>
     api.get('/config/pricing'),
 }
+
+// Test run types
+export interface TestRunRequest {
+  config_content: string
+}
+
+export interface TestRunResponse {
+  success: boolean
+  duration_ms: number
+  first_token_ms: number
+  tokens_per_second: number
+  response: string
+  error: string
+}
+
+// Extend taskApi with testRun
+export const testRunApi = {
+  run: (data: TestRunRequest) =>
+    api.post<TestRunResponse>('/tasks/test-run', data),
+}
