@@ -579,54 +579,73 @@ export default function TaskDetail() {
               label: '延迟分析',
               children: (
                 <>
-                  {/* 多执行器时显示各执行器的延迟汇总 */}
-                  {report.executor_summary && report.executor_summary.length > 1 && (
+                  {/* 多执行器时显示各执行器的延迟概览 */}
+                  {report.executor_summary && report.executor_summary.length > 1 ? (
+                    <Card title="各模型延迟概览" style={{ marginBottom: 16 }}>
+                      <Row gutter={16}>
+                        {report.executor_summary.map(exec => (
+                          <Col span={Math.max(4, Math.floor(24 / report.executor_summary.length))} key={exec.id}>
+                            <Card size="small" style={{ textAlign: 'center' }}>
+                              <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{exec.id}</div>
+                              <Statistic title="平均TTFT" value={exec.avg_ttft || 0} precision={0} suffix="毫秒" />
+                              <Statistic title="P95 TTFT" value={exec.p95_ttft || 0} precision={0} suffix="毫秒" />
+                              <Statistic title="成功率" value={exec.success_rate || 0} precision={1} suffix="%" />
+                            </Card>
+                          </Col>
+                        ))}
+                      </Row>
+                    </Card>
+                  ) : (
+                    /* 单执行器时显示整体分位数统计 */
                     <Row gutter={16} style={{ marginBottom: 16 }}>
-                      {report.executor_summary.map(exec => (
-                        <Col span={Math.floor(24 / report.executor_summary.length)} key={exec.id}>
-                          <Card size="small" title={exec.id}>
-                            <Statistic
-                              title="平均TTFT"
-                              value={exec.avg_ttft || 0}
-                              precision={2}
-                              suffix="毫秒"
-                            />
-                            <Statistic
-                              title="TPS"
-                              value={exec.avg_tps || 0}
-                              precision={1}
-                              suffix="tok/s"
-                              style={{ marginTop: 8 }}
-                            />
-                          </Card>
-                        </Col>
-                      ))}
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="P50" value={report.metrics.p50_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="P90" value={report.metrics.p90_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="P95" value={report.metrics.p95_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="P99" value={report.metrics.p99_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
                     </Row>
                   )}
 
-                  {/* 总体延迟分位数统计 */}
-                  <Row gutter={16} style={{ marginBottom: 16 }}>
-                    <Col span={6}>
-                      <Card>
-                        <Statistic title="P50" value={report.metrics.p50_ttft} precision={2} suffix="毫秒" />
-                      </Card>
-                    </Col>
-                    <Col span={6}>
-                      <Card>
-                        <Statistic title="P90" value={report.metrics.p90_ttft} precision={2} suffix="毫秒" />
-                      </Card>
-                    </Col>
-                    <Col span={6}>
-                      <Card>
-                        <Statistic title="P95" value={report.metrics.p95_ttft} precision={2} suffix="毫秒" />
-                      </Card>
-                    </Col>
-                    <Col span={6}>
-                      <Card>
-                        <Statistic title="P99" value={report.metrics.p99_ttft} precision={2} suffix="毫秒" />
-                      </Card>
-                    </Col>
-                  </Row>
+                  {/* 多执行器时 additionally 显示整体分位数统计 */}
+                  {report.executor_summary && report.executor_summary.length > 1 && (
+                    <Row gutter={16} style={{ marginBottom: 16 }}>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="整体 P50" value={report.metrics.p50_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="整体 P90" value={report.metrics.p90_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="整体 P95" value={report.metrics.p95_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                      <Col span={6}>
+                        <Card>
+                          <Statistic title="整体 P99" value={report.metrics.p99_ttft} precision={2} suffix="毫秒" />
+                        </Card>
+                      </Col>
+                    </Row>
+                  )}
 
                   {/* 延迟分布图表 - 支持分执行器显示 */}
                   {report.latency_analysis ? (
@@ -660,28 +679,60 @@ export default function TaskDetail() {
               label: '吞吐分析',
               children: (
                 <>
-                  {/* 多执行器时显示各执行器的吞吐汇总 */}
+                  {/* 多执行器时显示各执行器的吞吐概览 */}
+                  {report.executor_summary && report.executor_summary.length > 1 ? (
+                    <Card title="各模型吞吐概览" style={{ marginBottom: 16 }}>
+                      <Row gutter={16}>
+                        {report.executor_summary.map(exec => (
+                          <Col span={Math.max(4, Math.floor(24 / report.executor_summary.length))} key={exec.id}>
+                            <Card size="small" style={{ textAlign: 'center' }}>
+                              <div style={{ fontWeight: 'bold', marginBottom: 8 }}>{exec.id}</div>
+                              <Statistic title="平均TPS" value={exec.avg_tps || 0} precision={1} suffix="tok/s" />
+                              <Statistic title="平均输出Token" value={exec.avg_output_tokens || 0} precision={0} />
+                            </Card>
+                          </Col>
+                        ))}
+                      </Row>
+                    </Card>
+                  ) : (
+                    /* 单执行器时显示整体吞吐统计 */
+                    <Row gutter={16} style={{ marginBottom: 16 }}>
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="平均TPS" value={report.metrics.avg_tps} precision={1} suffix="tok/s" />
+                        </Card>
+                      </Col>
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="总输出Token" value={report.metrics.total_output_tokens} precision={0} />
+                        </Card>
+                      </Col>
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="总输入Token" value={report.metrics.total_input_tokens} precision={0} />
+                        </Card>
+                      </Col>
+                    </Row>
+                  )}
+
+                  {/* 多执行器时 additionally 显示整体吞吐统计 */}
                   {report.executor_summary && report.executor_summary.length > 1 && (
                     <Row gutter={16} style={{ marginBottom: 16 }}>
-                      {report.executor_summary.map(exec => (
-                        <Col span={Math.floor(24 / report.executor_summary.length)} key={exec.id}>
-                          <Card size="small" title={exec.id}>
-                            <Statistic
-                              title="平均TPS"
-                              value={exec.avg_tps || 0}
-                              precision={1}
-                              suffix="tok/s"
-                            />
-                            <Statistic
-                              title="平均输出Token"
-                              value={exec.avg_output_tokens || 0}
-                              precision={0}
-                              suffix="tokens"
-                              style={{ marginTop: 8 }}
-                            />
-                          </Card>
-                        </Col>
-                      ))}
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="整体平均TPS" value={report.metrics.avg_tps} precision={1} suffix="tok/s" />
+                        </Card>
+                      </Col>
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="总输出Token" value={report.metrics.total_output_tokens} precision={0} />
+                        </Card>
+                      </Col>
+                      <Col span={8}>
+                        <Card>
+                          <Statistic title="总输入Token" value={report.metrics.total_input_tokens} precision={0} />
+                        </Card>
+                      </Col>
                     </Row>
                   )}
 

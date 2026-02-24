@@ -68,7 +68,9 @@ class OpenAIChatExecutor(BaseExecutor):
 
         record.request_params = dict(request_params)
 
-        if price:
+        # Only override costs if price catalog has a matching entry
+        # Otherwise, keep the costs set by the provider (e.g., MockProvider sets its own costs)
+        if price and price.get(record.provider, record.model):
             prompt_cost, completion_cost, cache_cost, total_cost, currency = price.compute_cost(
                 record.provider,
                 record.model,

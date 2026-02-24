@@ -66,6 +66,12 @@ async def lifespan(app: FastAPI):
     except ImportError:
         pass
 
+    # Import providers to register them (especially mock for testing)
+    try:
+        from ..providers import mock  # noqa: F401
+    except ImportError:
+        pass
+
     yield
 
     # Shutdown

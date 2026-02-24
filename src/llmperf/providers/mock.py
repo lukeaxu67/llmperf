@@ -49,35 +49,40 @@ class MockProvider(BaseProvider):
 
     # Mock pricing for different models (CNY per million tokens)
     # Format: (input_price, output_price)
-    MODEL_PRICING = {
+    MOCK_PRICES = {
         # GPT-4 high cost
-        "gpt-4": (30.0, 60.0),
-        "gpt-4-turbo": (10.0, 30.0),
-        "gpt-4o": (15.0, 40.0),
+        "gpt-4": (210.0, 420.0),
+        "gpt-4-turbo": (70.0, 210.0),
+        "gpt-4o": (105.0, 315.0),
 
         # Claude medium cost
-        "claude": (15.0, 40.0),
-        "claude-3": (15.0, 40.0),
-        "claude-3-opus": (15.0, 50.0),
-        "claude-3-sonnet": (10.0, 30.0),
-        "claude-3-haiku": (2.5, 10.0),
+        "claude": (105.0, 525.0),
+        "claude-3": (105.0, 525.0),
+        "claude-3-opus": (140.0, 700.0),
+        "claude-3-sonnet": (105.0, 525.0),
+        "claude-3-haiku": (17.5, 87.5),
 
         # Gemini lower cost
-        "gemini": (8.0, 20.0),
-        "gemini-pro": (8.0, 20.0),
-        "gemini-ultra": (20.0, 50.0),
+        "gemini": (70.0, 210.0),
+        "gemini-pro": (70.0, 210.0),
+        "gemini-ultra": (175.0, 525.0),
 
         # Lite low cost
-        "lite": (1.0, 2.0),
-        "lite-001": (1.0, 2.0),
+        "lite-model": (7.0, 21.0),
+        "lite": (7.0, 21.0),
+        "lite-001": (7.0, 21.0),
 
         # Slow high cost (simulates slower, more expensive model)
-        "slow": (25.0, 55.0),
-        "slow-001": (25.0, 55.0),
+        "slow-model": (280.0, 560.0),
+        "slow": (280.0, 560.0),
+        "slow-001": (280.0, 560.0),
 
         # Default pricing
-        "default": (5.0, 10.0),
+        "default": (35.0, 105.0),
     }
+
+    # Backward compatibility alias
+    MODEL_PRICING = MOCK_PRICES
 
     def invoke(self, request: ProviderRequest) -> RunRecord:
         """Generate a mock response with configurable timing characteristics."""
@@ -199,7 +204,7 @@ class MockProvider(BaseProvider):
         elif "gemini" in model_lower:
             return self.MODEL_PRICING["gemini"]
 
-        # Check for special mock models
+        # Check for special mock models (support both old and new naming)
         elif "slow" in model_lower:
             return self.MODEL_PRICING["slow"]
         elif "lite" in model_lower:
