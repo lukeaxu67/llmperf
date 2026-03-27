@@ -59,6 +59,50 @@ export interface Task {
   error_message?: string
 }
 
+export interface ExecutorProgress {
+  id: string
+  name: string
+  provider?: string
+  model?: string | null
+  after: string[]
+  order: number
+  status: string
+  completed: number
+  total: number
+  progress_percent: number
+  success_count: number
+  error_count: number
+  success_rate: number
+  avg_input_tokens: number
+  avg_output_tokens: number
+  avg_ttft: number
+  p95_ttft: number
+  avg_total_time: number
+  avg_token_per_second: number
+  avg_token_per_second_with_calltime: number
+  cost: number
+  avg_cost_per_request: number
+  score: number
+  conclusion: string
+}
+
+export interface TaskTopologyNode {
+  id: string
+  name: string
+  kind?: 'boundary' | 'executor'
+  status?: string
+  level?: number
+  progress_percent?: number
+  model?: string | null
+  provider?: string
+}
+
+export interface TaskTopology {
+  nodes: TaskTopologyNode[]
+  edges: Array<{ source: string; target: string }>
+  layers: Array<{ level: number; node_ids: string[] }>
+}
+
 export interface TaskProgress {
   run_id: string
   status: string
@@ -73,6 +117,10 @@ export interface TaskProgress {
   currency: string
   current_rate?: number
   concurrency?: number
+  paused_at?: string | null
+  dataset_total_per_executor?: number
+  executors?: ExecutorProgress[]
+  topology?: TaskTopology
 }
 
 export interface TaskStats {
@@ -84,8 +132,19 @@ export interface TaskStats {
   total_cost: number
   currency: string
   avg_first_resp_time: number
+  p50_first_resp_time: number
+  p95_first_resp_time: number
+  p99_first_resp_time: number
+  avg_last_resp_time: number
+  p95_last_resp_time: number
   avg_char_per_second: number
   avg_token_throughput: number
+  avg_token_per_second: number
+  avg_token_per_second_with_calltime: number
+  avg_input_tokens: number
+  avg_output_tokens: number
+  total_input_tokens: number
+  total_output_tokens: number
 }
 
 export interface Dataset {
@@ -317,8 +376,11 @@ export const testRunApi = {
 export interface DetailedReport {
   run_id: string
   task_name: string
-  task_type: 'benchmark' | 'monitoring'
+  task_type?: 'benchmark' | 'monitoring'
+  status: string
+  is_partial: boolean
   completed_at: string | null
+  generated_at?: string | null
   duration_seconds: number
   score: number
   grade: string
@@ -330,28 +392,25 @@ export interface DetailedReport {
   }
   metrics: {
     total_requests: number
+    success_count?: number
+    error_count?: number
     success_rate: number
     avg_ttft: number
     p50_ttft: number
-    p90_ttft: number
     p95_ttft: number
-    p99_ttft: number
+    avg_total_time?: number
+    p95_total_time?: number
     avg_tps: number
+    avg_tps_with_ttft?: number
+    avg_input_tokens?: number
+    avg_output_tokens?: number
     total_cost: number
     currency: string
     total_input_tokens: number
     total_output_tokens: number
   }
-  executor_summary: Array<{
-    id: string
-    requests: number
-    success_rate: number
-    avg_ttft: number
-    p95_ttft: number
-    avg_tps: number
-    cost: number
-    avg_output_tokens: number
-  }>
+  executor_summary: ExecutorProgress[]
+  topology?: TaskTopology
   alerts: Array<{
     type: string
     severity: 'info' | 'warning' | 'error'

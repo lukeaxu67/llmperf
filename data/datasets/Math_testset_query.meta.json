@@ -1,0 +1,16 @@
+{
+  "name": "Math_testset_query",
+  "description": "Converted from Math_testset-query.jsonl to LLMPerf JSONL testcase format.",
+  "file_path": "Math_testset_query.jsonl",
+  "file_type": "jsonl",
+  "row_count": 269,
+  "columns": [
+    "id",
+    "messages",
+    "metadata"
+  ],
+  "created_at": 1774618656,
+  "updated_at": 1774618656,
+  "file_size": 141409,
+  "encoding": "utf-8"
+}

@@ -14,6 +14,19 @@ from .streaming import StreamAccumulator
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_OPTION_KEYS = {
+    "api_url",
+    "api_key",
+    "timeout",
+    "default_headers",
+    "messages_mode",
+    "stream_debug",
+    "stream_options",
+    "extra_body",
+    "extra_headers",
+    "extra_header",
+}
+
 
 def _shuffle_prefix(text: str, prefix_len: int = 10) -> str:
     if not text:
@@ -99,12 +112,22 @@ class OpenAIChatProvider(BaseProvider):
         extra_body = request.options.get("extra_body")
         extra_headers = request.options.get("extra_headers") or request.options.get("extra_header")
         stream_options = request.options.get("stream_options", {"include_usage": True})
+        forwarded_options = {
+            key: value
+            for key, value in request.options.items()
+            if key not in _INTERNAL_OPTION_KEYS
+        }
         record = RunRecord(
             run_id=request.run_id,
             executor_id=request.executor_id,
             dataset_row_id=request.dataset_row_id,
             provider=request.provider,
             model=request.model,
+            request_params={
+                **forwarded_options,
+                "extra_body": extra_body or {},
+                "extra_headers": extra_headers or {},
+            },
         )
         accumulator = StreamAccumulator(record, debug=request.options.get("stream_debug"))
         stream_failed = False
@@ -118,6 +141,7 @@ class OpenAIChatProvider(BaseProvider):
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 timeout=request.options.get("timeout", 300),
+                **forwarded_options,
             )
             for chunk in stream:
                 if self.handle_special_chunk(chunk, record):

@@ -13,12 +13,29 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from llmperf.config.loader import load_config
+from llmperf.config.models import ExecutorConfig, RunConfig
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
 from llmperf.runner import RunManager
 from .run_config_service import load_run_config_content, normalize_run_config
 
 logger = logging.getLogger(__name__)
+
+
+def _avg(values: List[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _percentile(values: List[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    rank = (len(sorted_values) - 1) * percentile
+    floor_index = int(rank)
+    ceil_index = min(floor_index + 1, len(sorted_values) - 1)
+    return sorted_values[floor_index] + (rank - floor_index) * (
+        sorted_values[ceil_index] - sorted_values[floor_index]
+    )
 
 
 class TaskStatus(str, Enum):
@@ -47,6 +64,12 @@ class TaskProgress:
     currency: str = "CNY"
     started_at: Optional[datetime] = None
     paused_duration_seconds: float = 0.0  # Total time spent paused
+    current_rate: float = 0.0
+    concurrency: int = 0
+    paused_at: Optional[datetime] = None
+    dataset_total_per_executor: int = 0
+    executors: List[Dict[str, Any]] = field(default_factory=list)
+    topology: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,6 +108,341 @@ class TaskService:
         runtime = load_runtime_config()
         self._db_path = str(runtime.db_path)
         self._storage = Storage(self._db_path)
+
+    def _load_run_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
+        return self._storage.get_run(run_id)
+
+    def _load_run_config(self, run_id: str) -> Optional[RunConfig]:
+        task_info = self._tasks.get(run_id)
+        try:
+            if task_info and task_info.config_path:
+                return normalize_run_config(load_config(task_info.config_path))
+            if run_id in self._config_contents:
+                config, _ = load_run_config_content(self._config_contents[run_id])
+                return config
+            run_snapshot = self._load_run_snapshot(run_id)
+            if not run_snapshot:
+                return None
+            config_content = run_snapshot.get("config_content") or ""
+            if config_content:
+                config, _ = load_run_config_content(config_content)
+                return config
+            config_path = run_snapshot.get("config_path")
+            if config_path:
+                return normalize_run_config(load_config(str(config_path)))
+        except Exception as exc:
+            logger.warning("Failed to load config for run %s: %s", run_id, exc)
+        return None
+
+    def _estimate_dataset_total(self, config: Optional[RunConfig]) -> int:
+        if not config or not config.dataset:
+            return 0
+        try:
+            from llmperf.datasets.dataset_source_registry import create_source
+
+            dataset_source = create_source(
+                config.dataset.source.type,
+                name=config.dataset.source.name or "dataset",
+                config=dict(config.dataset.source.config or {}),
+            )
+            dataset_total = 0
+            if hasattr(dataset_source, "__len__"):
+                try:
+                    dataset_total = len(dataset_source)
+                except TypeError:
+                    dataset_total = 0
+            if dataset_total == 0:
+                dataset_total = len(list(dataset_source.load()))
+            max_rounds = config.dataset.iterator.max_rounds if config.dataset.iterator else None
+            if max_rounds:
+                dataset_total *= max_rounds
+            return max(dataset_total, 0)
+        except Exception as exc:
+            logger.warning("Failed to estimate dataset total for run: %s", exc)
+            return 0
+
+    def _executor_levels(self, executors: List[ExecutorConfig]) -> Dict[str, int]:
+        executor_map = {executor.id: executor for executor in executors}
+        levels: Dict[str, int] = {}
+
+        def visit(executor_id: str, path: set[str]) -> int:
+            if executor_id in levels:
+                return levels[executor_id]
+            if executor_id in path:
+                return 0
+            path.add(executor_id)
+            executor = executor_map.get(executor_id)
+            if not executor or not executor.after:
+                level = 0
+            else:
+                level = 1 + max(visit(dep, path) for dep in executor.after if dep in executor_map)
+            path.remove(executor_id)
+            levels[executor_id] = level
+            return level
+
+        for executor in executors:
+            visit(executor.id, set())
+        return levels
+
+    def _topological_order(self, executors: List[ExecutorConfig]) -> List[str]:
+        pending = {executor.id: executor for executor in executors}
+        completed: set[str] = set()
+        ordered: List[str] = []
+        while pending:
+            ready_ids = [
+                executor_id
+                for executor_id, executor in pending.items()
+                if all(dep in completed or dep not in pending for dep in executor.after)
+            ]
+            if not ready_ids:
+                ordered.extend(sorted(pending))
+                break
+            for executor_id in ready_ids:
+                ordered.append(executor_id)
+                pending.pop(executor_id, None)
+                completed.add(executor_id)
+        return ordered
+
+    def _build_topology(self, config: Optional[RunConfig], executors: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not config:
+            return {"nodes": [], "edges": [], "layers": []}
+
+        id_to_executor = {item["id"]: item for item in executors}
+        levels = self._executor_levels(config.executors)
+        layers_map: Dict[int, List[str]] = {}
+        edges: List[Dict[str, str]] = []
+        downstream_count: Dict[str, int] = {executor.id: 0 for executor in config.executors}
+
+        for executor in config.executors:
+            level = levels.get(executor.id, 0)
+            layers_map.setdefault(level, []).append(executor.id)
+            if executor.after:
+                for dep in executor.after:
+                    edges.append({"source": dep, "target": executor.id})
+                    if dep in downstream_count:
+                        downstream_count[dep] += 1
+            else:
+                edges.append({"source": "__start__", "target": executor.id})
+
+        for executor in config.executors:
+            if downstream_count.get(executor.id, 0) == 0:
+                edges.append({"source": executor.id, "target": "__end__"})
+
+        node_items = [
+            {
+                "id": "__start__",
+                "name": "Start",
+                "kind": "boundary",
+                "status": "completed",
+                "level": -1,
+            }
+        ]
+        node_items.extend(
+            {
+                **id_to_executor.get(executor.id, {"id": executor.id, "name": executor.name}),
+                "kind": "executor",
+                "level": levels.get(executor.id, 0),
+            }
+            for executor in config.executors
+        )
+        node_items.append(
+            {
+                "id": "__end__",
+                "name": "End",
+                "kind": "boundary",
+                "status": "pending",
+                "level": max(levels.values(), default=0) + 1,
+            }
+        )
+
+        layers = [
+            {
+                "level": level,
+                "node_ids": sorted(node_ids),
+            }
+            for level, node_ids in sorted(layers_map.items())
+        ]
+
+        return {
+            "nodes": node_items,
+            "edges": edges,
+            "layers": layers,
+        }
+
+    def _build_executor_progress(
+        self,
+        config: Optional[RunConfig],
+        records: List[Any],
+        task_status: TaskStatus,
+        dataset_total: int,
+    ) -> List[Dict[str, Any]]:
+        if not config:
+            return []
+
+        per_executor: Dict[str, List[Any]] = {}
+        for record in records:
+            per_executor.setdefault(record.executor_id or "default", []).append(record)
+
+        completed_executor_ids = {
+            executor_id
+            for executor_id, executor_records in per_executor.items()
+            if dataset_total > 0 and len(executor_records) >= dataset_total
+        }
+        ordered_ids = self._topological_order(config.executors)
+        max_workers = (
+            config.multiprocess.max_workers
+            if config.multiprocess and config.multiprocess.max_workers
+            else max(1, len(config.executors))
+        )
+
+        ready_batch: List[str] = []
+        pending_ids = {executor.id for executor in config.executors if executor.id not in completed_executor_ids}
+        if pending_ids:
+            for executor_id in ordered_ids:
+                executor = next((item for item in config.executors if item.id == executor_id), None)
+                if not executor or executor.id not in pending_ids:
+                    continue
+                if all(dep in completed_executor_ids for dep in executor.after):
+                    ready_batch.append(executor.id)
+                if len(ready_batch) >= max_workers:
+                    break
+
+        executor_items: List[Dict[str, Any]] = []
+        for order, executor in enumerate(config.executors):
+            executor_records = per_executor.get(executor.id, [])
+            success_records = [record for record in executor_records if record.status == 200]
+            ttfts = [float(record.first_resp_time) for record in success_records if record.first_resp_time > 0]
+            total_times = [float(record.last_resp_time) for record in success_records if record.last_resp_time > 0]
+            input_tokens = [float(record.qtokens) for record in success_records if record.qtokens >= 0]
+            output_tokens = [float(record.atokens) for record in success_records if record.atokens >= 0]
+            tps = [float(record.token_per_second) for record in success_records if record.token_per_second > 0]
+            tps_with_ttft = [
+                float(record.token_per_second_with_calltime)
+                for record in success_records
+                if record.token_per_second_with_calltime > 0
+            ]
+
+            completed = len(executor_records)
+            total = dataset_total
+            success_count = len(success_records)
+            error_count = completed - success_count
+            progress_percent = min(100.0, (completed / total) * 100) if total > 0 else 0.0
+
+            if total > 0 and completed >= total:
+                status = TaskStatus.COMPLETED.value
+            elif completed > 0:
+                status = TaskStatus.PAUSED.value if task_status == TaskStatus.PAUSED else TaskStatus.RUNNING.value
+            elif task_status in (TaskStatus.RUNNING, TaskStatus.PAUSED) and executor.id in ready_batch:
+                status = TaskStatus.PAUSED.value if task_status == TaskStatus.PAUSED else TaskStatus.RUNNING.value
+            elif executor.after and not all(dep in completed_executor_ids for dep in executor.after):
+                status = "blocked"
+            elif task_status == TaskStatus.CANCELLED:
+                status = TaskStatus.CANCELLED.value
+            elif task_status == TaskStatus.FAILED:
+                status = TaskStatus.FAILED.value
+            else:
+                status = TaskStatus.PENDING.value
+
+            score = round(
+                min(100.0, (success_count / completed * 100) if completed else 0.0) * 0.45
+                + min(100.0, max(0.0, 100.0 - (_avg(ttfts) / 50.0))) * 0.25
+                + min(100.0, _avg(tps_with_ttft) * 4.0) * 0.30
+            ) if completed else 0
+
+            if completed == 0:
+                conclusion = "尚无样本结果"
+            elif error_count > 0 and success_count == 0:
+                conclusion = "当前样本全部失败，需要先排查接口或参数配置"
+            elif error_count > 0:
+                conclusion = "已有可用结果，但存在失败样本，结论需结合错误分布复核"
+            elif progress_percent < 100:
+                conclusion = "基于当前已完成样本给出阶段性结论，任务完成后可继续复核"
+            elif _avg(ttfts) > 3000:
+                conclusion = "结果稳定但首响偏慢，更适合离线或低交互场景"
+            elif _avg(tps_with_ttft) < 10:
+                conclusion = "结果可用，但生成速率偏低，吞吐能力一般"
+            else:
+                conclusion = "结果稳定，当前样本下延迟和生成效率表现正常"
+
+            executor_items.append(
+                {
+                    "id": executor.id,
+                    "name": executor.name,
+                    "provider": executor.type,
+                    "model": executor.model,
+                    "after": list(executor.after),
+                    "order": order,
+                    "status": status,
+                    "completed": completed,
+                    "total": total,
+                    "progress_percent": progress_percent,
+                    "success_count": success_count,
+                    "error_count": error_count,
+                    "success_rate": (success_count / completed * 100.0) if completed else 0.0,
+                    "avg_input_tokens": _avg(input_tokens),
+                    "avg_output_tokens": _avg(output_tokens),
+                    "avg_ttft": _avg(ttfts),
+                    "p95_ttft": _percentile(ttfts, 0.95),
+                    "avg_total_time": _avg(total_times),
+                    "avg_token_per_second": _avg(tps),
+                    "avg_token_per_second_with_calltime": _avg(tps_with_ttft),
+                    "cost": sum(record.total_cost for record in executor_records),
+                    "avg_cost_per_request": (sum(record.total_cost for record in executor_records) / completed) if completed else 0.0,
+                    "score": score,
+                    "conclusion": conclusion,
+                }
+            )
+
+        return executor_items
+
+    def _update_progress_snapshot(
+        self,
+        run_id: str,
+        *,
+        task_status: Optional[TaskStatus] = None,
+        progress: Optional[TaskProgress] = None,
+    ) -> Optional[TaskProgress]:
+        current_progress = progress or self._progress.get(run_id)
+        if not current_progress:
+            return None
+
+        config = self._load_run_config(run_id)
+        if config:
+            dataset_total = current_progress.dataset_total_per_executor or self._estimate_dataset_total(config)
+            current_progress.dataset_total_per_executor = dataset_total
+            current_progress.total = dataset_total * len(config.executors)
+            current_progress.concurrency = sum(max(1, executor.concurrency) for executor in config.executors)
+        else:
+            dataset_total = current_progress.dataset_total_per_executor
+
+        records = list(self._storage.fetch_run_records(run_id))
+        completed = len(records)
+        success_count = sum(1 for record in records if record.status == 200)
+        error_count = completed - success_count
+        current_progress.completed = completed
+        current_progress.success_count = success_count
+        current_progress.error_count = error_count
+        current_progress.current_cost = sum(record.total_cost for record in records)
+        if records:
+            current_progress.currency = records[0].currency
+        if current_progress.total > 0:
+            current_progress.progress_percent = min(100.0, (completed / current_progress.total) * 100.0)
+
+        effective_status = task_status or current_progress.status
+        current_progress.executors = self._build_executor_progress(config, records, effective_status, dataset_total)
+        current_progress.topology = self._build_topology(config, current_progress.executors)
+
+        if current_progress.started_at and effective_status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+            elapsed = (datetime.now() - current_progress.started_at).total_seconds() - current_progress.paused_duration_seconds
+            current_progress.elapsed_seconds = max(elapsed, 0.0)
+            if current_progress.completed > 0 and current_progress.total > current_progress.completed:
+                remaining = current_progress.total - current_progress.completed
+                rate = current_progress.completed / max(current_progress.elapsed_seconds, 1.0)
+                current_progress.eta_seconds = (remaining / rate) if rate > 0 else None
+            else:
+                current_progress.eta_seconds = 0.0 if current_progress.total and current_progress.completed >= current_progress.total else None
+
+        return current_progress
 
     def create_task(
         self,
@@ -160,45 +518,14 @@ class TaskService:
             progress.status = TaskStatus.RUNNING
             progress.started_at = task_info.started_at
 
-        # Get total records from dataset for progress tracking
-        dataset_total = 0
-        try:
-            if task_info.config_path:
-                config = normalize_run_config(load_config(task_info.config_path))
-            elif self._config_contents.get(run_id):
-                config, _ = load_run_config_content(self._config_contents[run_id])
-            else:
-                config = None
-
-            if config and config.dataset:
-                from llmperf.datasets.dataset_source_registry import create_source
-
-                dataset_source = create_source(
-                    config.dataset.source.type,
-                    name=config.dataset.source.name or "dataset",
-                    config=dict(config.dataset.source.config or {}),
-                )
-                # Try to get total count
-                if hasattr(dataset_source, "__len__"):
-                    try:
-                        dataset_total = len(dataset_source)
-                    except TypeError:
-                        pass
-                if dataset_total == 0:
-                    # Try loading to count
-                    try:
-                        dataset_total = len(list(dataset_source.load()))
-                    except Exception:
-                        pass
-
-                # Account for max_rounds
-                if config.dataset.iterator and config.dataset.iterator.max_rounds:
-                    dataset_total = dataset_total * config.dataset.iterator.max_rounds
-
-            if progress and dataset_total > 0:
-                progress.total = dataset_total
-        except Exception as e:
-            logger.warning("Failed to get dataset total: %s", e)
+        config = self._load_run_config(run_id)
+        dataset_total = self._estimate_dataset_total(config)
+        if progress and config:
+            progress.dataset_total_per_executor = dataset_total
+            progress.total = dataset_total * len(config.executors)
+            progress.concurrency = sum(max(1, executor.concurrency) for executor in config.executors)
+            progress.executors = self._build_executor_progress(config, [], TaskStatus.RUNNING, dataset_total)
+            progress.topology = self._build_topology(config, progress.executors)
 
         # Create control events
         cancel_event = threading.Event()
@@ -253,13 +580,14 @@ class TaskService:
             # Update completion status and calculate total cost
             task_info.status = TaskStatus.COMPLETED
             task_info.completed_at = datetime.now()
+            self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
 
             if progress:
                 progress.status = TaskStatus.COMPLETED
-                progress.progress_percent = 100.0
                 # Fix elapsed_seconds to final value
                 if progress.started_at and task_info.completed_at:
                     progress.elapsed_seconds = (task_info.completed_at - progress.started_at).total_seconds()
+                self._update_progress_snapshot(run_id, task_status=TaskStatus.COMPLETED, progress=progress)
 
             # Calculate and save total cost to database
             try:
@@ -276,9 +604,11 @@ class TaskService:
             task_info.status = TaskStatus.FAILED
             task_info.error_message = str(e)
             task_info.completed_at = datetime.now()
+            self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
 
             if progress:
                 progress.status = TaskStatus.FAILED
+                self._update_progress_snapshot(run_id, task_status=TaskStatus.FAILED, progress=progress)
 
         finally:
             # Cleanup control events
@@ -361,43 +691,19 @@ class TaskService:
 
                 # Only fetch stats and update if not paused
                 if progress.status != TaskStatus.PAUSED:
-                    # Fetch current stats from database
-                    records = list(self._storage.fetch_run_records(run_id))
+                    self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
 
-                    if records:
-                        total = len(records)
-                        success_count = sum(1 for r in records if r.status == 200)
-                        error_count = total - success_count
-                        total_cost = sum(r.total_cost for r in records)
+                    # Calculate current rate (requests per second)
+                    now = datetime.now()
+                    time_delta = (now - last_update_time).total_seconds()
+                    if time_delta > 0:
+                        completed_delta = progress.completed - last_completed_count
+                        progress.current_rate = completed_delta / time_delta
+                    last_update_time = now
+                    last_completed_count = progress.completed
 
-                        progress.completed = total
-                        progress.success_count = success_count
-                        progress.error_count = error_count
-                        progress.current_cost = total_cost
-                        progress.currency = records[0].currency if records else "CNY"
-
-                        # Calculate progress percent if we have total
-                        if progress.total and progress.total > 0:
-                            progress.progress_percent = min(100.0, (total / progress.total) * 100)
-
-                        # Calculate elapsed time only if still running
-                        if progress.status == TaskStatus.RUNNING:
-                            elapsed = (datetime.now() - progress.started_at).total_seconds()
-                            # Subtract paused duration
-                            elapsed = elapsed - progress.paused_duration_seconds
-                            progress.elapsed_seconds = max(0, elapsed)
-
-                            # Calculate current rate (requests per second)
-                            now = datetime.now()
-                            time_delta = (now - last_update_time).total_seconds()
-                            if time_delta > 0:
-                                completed_delta = total - last_completed_count
-                                progress.current_rate = completed_delta / time_delta
-                            last_update_time = now
-                            last_completed_count = total
-
-                        # Broadcast progress update
-                        asyncio.run(self._broadcast_progress(run_id))
+                    # Broadcast progress update
+                    asyncio.run(self._broadcast_progress(run_id))
 
                 time.sleep(2)  # Poll every 2 seconds
 
@@ -434,6 +740,8 @@ class TaskService:
                 current_rate=progress.current_rate,
                 concurrency=progress.concurrency,
                 paused_at=progress.paused_at,
+                executors=progress.executors,
+                topology=progress.topology,
             )
         except Exception as e:
             logger.warning("Failed to broadcast progress: %s", e)
@@ -479,17 +787,16 @@ class TaskService:
 
         # If not in memory, try to load from database
         try:
-            runs = self._storage.list_runs(limit=1000)
-            for run in runs:
-                if run.get("run_id") == run_id:
-                    return TaskInfo(
-                        run_id=run_id,
-                        status=TaskStatus.COMPLETED,
-                        config_path=run.get("config_path"),
-                        task_name=run.get("info", ""),
-                        created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
-                        completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
-                    )
+            run = self._storage.get_run(run_id)
+            if run:
+                return TaskInfo(
+                    run_id=run_id,
+                    status=TaskStatus.COMPLETED,
+                    config_path=run.get("config_path"),
+                    task_name=run.get("info", ""),
+                    created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
+                    completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
+                )
         except Exception as e:
             logger.warning("Failed to load task from database: %s", e)
 
@@ -504,7 +811,25 @@ class TaskService:
         Returns:
             TaskProgress if found, None otherwise.
         """
-        return self._progress.get(run_id)
+        progress = self._progress.get(run_id)
+        if progress:
+            return self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
+
+        task_info = self.get_task(run_id)
+        if not task_info:
+            return None
+
+        synthetic_progress = TaskProgress(
+            run_id=run_id,
+            status=task_info.status,
+            started_at=task_info.started_at or task_info.created_at,
+        )
+        if task_info.completed_at and synthetic_progress.started_at:
+            synthetic_progress.elapsed_seconds = max(
+                (task_info.completed_at - synthetic_progress.started_at).total_seconds(),
+                0.0,
+            )
+        return self._update_progress_snapshot(run_id, task_status=task_info.status, progress=synthetic_progress)
 
     def list_tasks(
         self,
@@ -537,6 +862,7 @@ class TaskService:
                         config_path=run.get("config_path"),
                         task_name=run.get("info", ""),
                         created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
+                        completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
                     )
                     tasks.append(task)
         except Exception as e:
@@ -609,6 +935,8 @@ class TaskService:
         progress = self._progress.get(run_id)
         if progress:
             progress.status = TaskStatus.CANCELLED
+            self._update_progress_snapshot(run_id, task_status=TaskStatus.CANCELLED, progress=progress)
+        self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
 
         # Broadcast status change
         asyncio.run(self._broadcast_status(run_id))
@@ -741,7 +1069,7 @@ class TaskService:
             return True
 
     def get_stats(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get statistics for a completed task.
+        """Get statistics for a task using current persisted records.
 
         Args:
             run_id: The run ID.
@@ -758,21 +1086,18 @@ class TaskService:
         successful = [r for r in records if r.status == 200]
         failed = [r for r in records if r.status != 200]
 
-        first_resp_times = [r.first_resp_time for r in successful if r.first_resp_time > 0]
-        char_per_sec = [r.char_per_second for r in successful if r.char_per_second > 0]
-        token_throughput = [r.token_throughput for r in successful if r.token_throughput > 0]
-
-        def avg(lst):
-            return sum(lst) / len(lst) if lst else 0
-
-        def percentile(lst, p):
-            if not lst:
-                return 0
-            sorted_lst = sorted(lst)
-            k = (len(sorted_lst) - 1) * p / 100
-            f = int(k)
-            c = f + 1 if f + 1 < len(sorted_lst) else f
-            return sorted_lst[f] + (k - f) * (sorted_lst[c] - sorted_lst[f])
+        first_resp_times = [float(r.first_resp_time) for r in successful if r.first_resp_time > 0]
+        last_resp_times = [float(r.last_resp_time) for r in successful if r.last_resp_time > 0]
+        char_per_sec = [float(r.char_per_second) for r in successful if r.char_per_second > 0]
+        token_throughput = [float(r.token_throughput) for r in successful if r.token_throughput > 0]
+        token_per_second = [float(r.token_per_second) for r in successful if r.token_per_second > 0]
+        token_per_second_with_calltime = [
+            float(r.token_per_second_with_calltime)
+            for r in successful
+            if r.token_per_second_with_calltime > 0
+        ]
+        input_tokens = [float(r.qtokens) for r in successful if r.qtokens >= 0]
+        output_tokens = [float(r.atokens) for r in successful if r.atokens >= 0]
 
         return {
             "total_requests": total,
@@ -781,18 +1106,24 @@ class TaskService:
             "success_rate": len(successful) / total * 100 if total > 0 else 0,
             "total_cost": sum(r.total_cost for r in records),
             "currency": records[0].currency if records else "CNY",
-            "avg_first_resp_time": avg(first_resp_times),
-            "p50_first_resp_time": percentile(first_resp_times, 50),
-            "p95_first_resp_time": percentile(first_resp_times, 95),
-            "p99_first_resp_time": percentile(first_resp_times, 99),
-            "avg_char_per_second": avg(char_per_sec),
-            "avg_token_throughput": avg(token_throughput),
+            "avg_first_resp_time": _avg(first_resp_times),
+            "p50_first_resp_time": _percentile(first_resp_times, 0.50),
+            "p95_first_resp_time": _percentile(first_resp_times, 0.95),
+            "p99_first_resp_time": _percentile(first_resp_times, 0.99),
+            "avg_last_resp_time": _avg(last_resp_times),
+            "p95_last_resp_time": _percentile(last_resp_times, 0.95),
+            "avg_char_per_second": _avg(char_per_sec),
+            "avg_token_throughput": _avg(token_throughput),
+            "avg_token_per_second": _avg(token_per_second),
+            "avg_token_per_second_with_calltime": _avg(token_per_second_with_calltime),
+            "avg_input_tokens": _avg(input_tokens),
+            "avg_output_tokens": _avg(output_tokens),
             "total_input_tokens": sum(r.qtokens for r in records),
             "total_output_tokens": sum(r.atokens for r in records),
         }
 
     def get_quick_report(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Generate a quick report for a completed task.
+        """Generate a fresh report snapshot from current run records.
 
         Args:
             run_id: The run ID.
@@ -806,9 +1137,13 @@ class TaskService:
         if not stats:
             return None
 
+        progress = self.get_progress(run_id)
+        task_status = progress.status if progress else (task_info.status if task_info else TaskStatus.COMPLETED)
+        executor_summary = progress.executors if progress else self._get_executor_summary(run_id)
+
         # Calculate dimension scores
         latency_score = self._calculate_latency_score(stats.get("avg_first_resp_time", 0))
-        throughput_score = self._calculate_throughput_score(stats.get("avg_token_throughput", 0))
+        throughput_score = self._calculate_throughput_score(stats.get("avg_token_per_second_with_calltime", 0))
         success_score = self._calculate_success_score(stats.get("success_rate", 0))
         cost_score = self._calculate_cost_score(stats.get("total_cost", 0), stats.get("total_requests", 1))
 
@@ -829,9 +1164,6 @@ class TaskService:
         # Generate recommendations
         recommendations = self._generate_recommendations(stats, latency_score, throughput_score, success_score, cost_score)
 
-        # Get executor summary
-        executor_summary = self._get_executor_summary(run_id)
-
         # Calculate cost analysis
         cost_analysis = self._calculate_cost_analysis(run_id, executor_summary, stats)
 
@@ -843,8 +1175,11 @@ class TaskService:
         return {
             "run_id": run_id,
             "task_name": task_info.task_name if task_info else "Unknown Task",
+            "status": task_status.value if isinstance(task_status, TaskStatus) else str(task_status),
+            "is_partial": task_status != TaskStatus.COMPLETED,
             "completed_at": task_info.completed_at if task_info else None,
             "duration_seconds": duration_seconds,
+            "generated_at": datetime.now(),
             "score": overall_score,
             "grade": grade,
             "dimension_scores": {
@@ -855,10 +1190,18 @@ class TaskService:
             },
             "metrics": {
                 "total_requests": stats.get("total_requests", 0),
+                "success_count": stats.get("success_count", 0),
+                "error_count": stats.get("error_count", 0),
                 "success_rate": stats.get("success_rate", 0),
                 "avg_ttft": stats.get("avg_first_resp_time", 0),
+                "p50_ttft": stats.get("p50_first_resp_time", 0),
                 "p95_ttft": stats.get("p95_first_resp_time", 0),
-                "avg_tps": stats.get("avg_token_throughput", 0),
+                "avg_total_time": stats.get("avg_last_resp_time", 0),
+                "p95_total_time": stats.get("p95_last_resp_time", 0),
+                "avg_tps": stats.get("avg_token_per_second", 0),
+                "avg_tps_with_ttft": stats.get("avg_token_per_second_with_calltime", 0),
+                "avg_input_tokens": stats.get("avg_input_tokens", 0),
+                "avg_output_tokens": stats.get("avg_output_tokens", 0),
                 "total_cost": stats.get("total_cost", 0),
                 "currency": stats.get("currency", "CNY"),
                 "total_input_tokens": stats.get("total_input_tokens", 0),
@@ -866,6 +1209,7 @@ class TaskService:
             },
             "executor_summary": executor_summary,
             "cost_analysis": cost_analysis,
+            "topology": progress.topology if progress else {"nodes": [], "edges": [], "layers": []},
             "alerts": alerts,
             "recommendations": recommendations,
         }
@@ -1123,43 +1467,7 @@ class TaskService:
 
     def _get_executor_summary(self, run_id: str) -> List[Dict[str, Any]]:
         """Get summary statistics by executor."""
-        records = list(self._storage.fetch_run_records(run_id))
-
-        # Group by executor
-        executors: Dict[str, List[Any]] = {}
-        for r in records:
-            exec_id = r.executor_id or "default"
-            if exec_id not in executors:
-                executors[exec_id] = []
-            executors[exec_id].append(r)
-
-        def percentile(lst, p):
-            """Calculate percentile of a list."""
-            if not lst:
-                return 0
-            sorted_lst = sorted(lst)
-            k = (len(sorted_lst) - 1) * p / 100
-            f = int(k)
-            c = f + 1 if f + 1 < len(sorted_lst) else f
-            return sorted_lst[f] + (k - f) * (sorted_lst[c] - sorted_lst[f])
-
-        summary = []
-        for exec_id, exec_records in executors.items():
-            total = len(exec_records)
-            successful = [r for r in exec_records if r.status == 200]
-            ttfts = [r.first_resp_time for r in successful if r.first_resp_time > 0]
-            tps_list = [r.token_throughput for r in successful if r.token_throughput > 0]
-            output_tokens = [r.atokens for r in successful]
-
-            summary.append({
-                "id": exec_id,
-                "requests": total,
-                "success_rate": len(successful) / total * 100 if total > 0 else 0,
-                "avg_ttft": sum(ttfts) / len(ttfts) if ttfts else 0,
-                "p95_ttft": percentile(ttfts, 95),
-                "avg_tps": sum(tps_list) / len(tps_list) if tps_list else 0,
-                "avg_output_tokens": sum(output_tokens) / len(output_tokens) if output_tokens else 0,
-                "cost": sum(r.total_cost for r in exec_records),
-            })
-
-        return summary
+        progress = self.get_progress(run_id)
+        if progress and progress.executors:
+            return progress.executors
+        return []

@@ -215,12 +215,32 @@ class Storage:
                     "task_type": row.task_type,
                     "info": row.info,
                     "created_at": row.created_at,
+                    "completed_at": getattr(row, "completed_at", 0),
                     "config_path": row.config_path,
+                    "config_content": getattr(row, "config_content", ""),
                     "total_cost": getattr(row, "total_cost", 0.0),
                     "currency": getattr(row, "currency", "CNY"),
                 }
                 for row in rows
             ]
+
+    def get_run(self, run_id: str) -> Optional[dict]:
+        """Get a single run snapshot."""
+        with self.db.session() as session:
+            row = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if not row:
+                return None
+            return {
+                "run_id": row.id,
+                "task_type": row.task_type,
+                "info": row.info,
+                "created_at": row.created_at,
+                "completed_at": getattr(row, "completed_at", 0),
+                "config_path": row.config_path,
+                "config_content": getattr(row, "config_content", ""),
+                "total_cost": getattr(row, "total_cost", 0.0),
+                "currency": getattr(row, "currency", "CNY"),
+            }
 
     def update_run_cost(self, run_id: str, total_cost: float, currency: str = "CNY") -> None:
         """Update the total cost for a run."""
@@ -229,6 +249,14 @@ class Storage:
             if run:
                 run.total_cost = total_cost
                 run.currency = currency
+                session.commit()
+
+    def mark_run_completed(self, run_id: str, completed_at: Optional[int] = None) -> None:
+        """Record run completion timestamp."""
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if run:
+                run.completed_at = completed_at or int(time.time())
                 session.commit()
 
     def get_total_cost(self) -> dict:

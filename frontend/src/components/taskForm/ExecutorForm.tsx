@@ -16,6 +16,7 @@ import {
 interface ExecutorFormProps {
   open: boolean
   executor: ExecutorConfig | null
+  executors: ExecutorConfig[]
   onClose: () => void
   onSave: (executor: ExecutorConfig) => void
   onCheckPrice?: (provider: string, model: string) => Promise<boolean>
@@ -63,6 +64,7 @@ function validateJsonObject(label: string) {
 export default function ExecutorForm({
   open,
   executor,
+  executors,
   onClose,
   onSave,
   onCheckPrice,
@@ -164,6 +166,12 @@ export default function ExecutorForm({
   }
 
   const selectedType = Form.useWatch('type', form)
+  const dependencyOptions = executors
+    .filter((item) => item.id !== executor?.id)
+    .map((item) => ({
+      label: `${item.name} (${item.id})`,
+      value: item.id,
+    }))
 
   return (
     <Modal
@@ -215,6 +223,19 @@ export default function ExecutorForm({
           rules={[{ required: true, message: '请输入并发数' }]}
         >
           <InputNumber min={1} max={100} style={{ width: '100%' }} />
+        </Form.Item>
+
+        <Form.Item
+          name="after"
+          label="前置执行器"
+          tooltip="所选执行器全部完成后，当前执行器才会启动"
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            options={dependencyOptions}
+            placeholder="可选：配置执行依赖"
+          />
         </Form.Item>
 
         {selectedType !== 'mock' && (

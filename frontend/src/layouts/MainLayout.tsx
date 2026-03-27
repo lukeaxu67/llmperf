@@ -1,48 +1,35 @@
 import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Menu, theme, Button, Badge, Dropdown, Space, Avatar } from 'antd'
+import { Layout, Menu, theme, Button, Typography } from 'antd'
 import {
   DashboardOutlined,
   RocketOutlined,
   DollarOutlined,
   DatabaseOutlined,
   SettingOutlined,
-  BellOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  UserOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 
 const { Header, Sider, Content } = Layout
 
 const menuItems: MenuProps['items'] = [
-  {
-    key: '/dashboard',
-    icon: <DashboardOutlined />,
-    label: '仪表板',
-  },
-  {
-    key: '/tasks',
-    icon: <RocketOutlined />,
-    label: '任务管理',
-  },
-  {
-    key: '/pricing',
-    icon: <DollarOutlined />,
-    label: '成本监控',
-  },
-  {
-    key: '/datasets',
-    icon: <DatabaseOutlined />,
-    label: '数据集',
-  },
-  {
-    key: '/settings',
-    icon: <SettingOutlined />,
-    label: '系统设置',
-  },
+  { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表板' },
+  { key: '/tasks', icon: <RocketOutlined />, label: '任务管理' },
+  { key: '/pricing', icon: <DollarOutlined />, label: '成本监控' },
+  { key: '/datasets', icon: <DatabaseOutlined />, label: '数据集' },
+  { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
+
+const pageTitles: Record<string, string> = {
+  '/dashboard': '仪表板',
+  '/tasks': '任务管理',
+  '/tasks/create': '创建任务',
+  '/pricing': '成本监控',
+  '/datasets': '数据集',
+  '/settings': '系统设置',
+}
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
@@ -56,19 +43,7 @@ export default function MainLayout() {
     navigate(key)
   }
 
-  const userMenuItems: MenuProps['items'] = [
-    {
-      key: 'profile',
-      label: '个人设置',
-    },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'logout',
-      label: '退出登录',
-    },
-  ]
+  const title = pageTitles[location.pathname] || 'LLMPerf'
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -77,9 +52,7 @@ export default function MainLayout() {
         collapsible
         collapsed={collapsed}
         theme="light"
-        style={{
-          boxShadow: '2px 0 8px rgba(0,0,0,0.05)',
-        }}
+        style={{ boxShadow: '2px 0 8px rgba(0,0,0,0.05)' }}
       >
         <div
           style={{
@@ -90,16 +63,13 @@ export default function MainLayout() {
             borderBottom: '1px solid #f0f0f0',
           }}
         >
-          {collapsed ? (
-            <span style={{ fontSize: 20, fontWeight: 'bold', color: '#1677ff' }}>LP</span>
-          ) : (
-            <span style={{ fontSize: 18, fontWeight: 'bold', color: '#1677ff' }}>LLMPerf</span>
-          )}
+          <span style={{ fontSize: collapsed ? 20 : 18, fontWeight: 'bold', color: '#1677ff' }}>
+            {collapsed ? 'LP' : 'LLMPerf'}
+          </span>
         </div>
         <Menu
           mode="inline"
           selectedKeys={[location.pathname]}
-          defaultOpenKeys={['/tasks']}
           items={menuItems}
           onClick={handleMenuClick}
           style={{ borderRight: 0 }}
@@ -122,21 +92,9 @@ export default function MainLayout() {
             onClick={() => setCollapsed(!collapsed)}
             style={{ fontSize: 16 }}
           />
-          <Space size="middle">
-            <Badge count={0} size="small">
-              <Button
-                type="text"
-                icon={<BellOutlined />}
-                style={{ fontSize: 18 }}
-              />
-            </Badge>
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <Space style={{ cursor: 'pointer' }}>
-                <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1677ff' }} />
-                <span>Admin</span>
-              </Space>
-            </Dropdown>
-          </Space>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            {title}
+          </Typography.Title>
         </Header>
         <Content
           style={{

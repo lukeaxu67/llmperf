@@ -102,6 +102,8 @@ class ConnectionManager:
         current_rate: float = 0.0,
         concurrency: int = 1,
         paused_at: Optional[datetime] = None,
+        executors: Optional[list[dict]] = None,
+        topology: Optional[dict] = None,
     ):
         """Broadcast progress update for a run.
 
@@ -139,6 +141,8 @@ class ConnectionManager:
                 "current_rate": current_rate,
                 "concurrency": concurrency,
                 "paused_at": paused_at.isoformat() if paused_at else None,
+                "executors": executors or [],
+                "topology": topology or {"nodes": [], "edges": [], "layers": []},
             },
         }
         await self.broadcast_to_run(run_id, message)

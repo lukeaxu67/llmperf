@@ -42,7 +42,7 @@ interface TaskFormStore extends TaskFormState {
   setMaxTotalSeconds: (seconds: number | null) => void
 
   // Executors
-  addExecutor: (type?: ExecutorType) => void
+  addExecutor: (type?: ExecutorType) => string
   updateExecutor: (id: string, updates: Partial<ExecutorConfig>) => void
   removeExecutor: (id: string) => void
   duplicateExecutor: (id: string) => void

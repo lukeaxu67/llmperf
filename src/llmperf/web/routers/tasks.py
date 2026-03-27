@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..services.task_service import TaskService, TaskStatus, TaskInfo
@@ -60,6 +60,12 @@ class TaskProgressResponse(BaseModel):
     error_count: int = 0
     current_cost: float = 0.0
     currency: str = "CNY"
+    current_rate: float = 0.0
+    concurrency: int = 0
+    paused_at: Optional[datetime] = None
+    dataset_total_per_executor: int = 0
+    executors: List[Dict[str, Any]] = Field(default_factory=list)
+    topology: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskStatsResponse(BaseModel):
@@ -75,15 +81,26 @@ class TaskStatsResponse(BaseModel):
     p50_first_resp_time: float
     p95_first_resp_time: float
     p99_first_resp_time: float
+    avg_last_resp_time: float = 0.0
+    p95_last_resp_time: float = 0.0
     avg_char_per_second: float
     avg_token_throughput: float
+    avg_token_per_second: float = 0.0
+    avg_token_per_second_with_calltime: float = 0.0
+    avg_input_tokens: float = 0.0
+    avg_output_tokens: float = 0.0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
 
 
 class QuickReportResponse(BaseModel):
     """Quick report response."""
     run_id: str
     task_name: str
+    status: str = "completed"
+    is_partial: bool = False
     completed_at: Optional[datetime]
+    generated_at: Optional[datetime] = None
     duration_seconds: float
     score: int
     grade: str
@@ -91,6 +108,7 @@ class QuickReportResponse(BaseModel):
     metrics: Dict[str, Any]
     executor_summary: List[Dict[str, Any]]
     cost_analysis: Optional[Dict[str, Any]] = None
+    topology: Dict[str, Any] = Field(default_factory=dict)
     alerts: List[Dict[str, Any]]
     recommendations: List[Dict[str, Any]]
 
@@ -210,7 +228,7 @@ async def get_task_progress(run_id: str):
     if not progress:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    return TaskProgressResponse(
+    response = TaskProgressResponse(
         run_id=progress.run_id,
         status=progress.status,
         progress_percent=progress.progress_percent,
@@ -222,6 +240,20 @@ async def get_task_progress(run_id: str):
         error_count=progress.error_count,
         current_cost=progress.current_cost,
         currency=progress.currency,
+        current_rate=progress.current_rate,
+        concurrency=progress.concurrency,
+        paused_at=progress.paused_at,
+        dataset_total_per_executor=progress.dataset_total_per_executor,
+        executors=progress.executors,
+        topology=progress.topology,
+    )
+    return JSONResponse(
+        content=response.model_dump(mode="json"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -238,7 +270,7 @@ async def get_task_stats(run_id: str):
     if not stats:
         raise HTTPException(status_code=404, detail="Task not found or no data")
 
-    return TaskStatsResponse(
+    response = TaskStatsResponse(
         run_id=run_id,
         total_requests=stats.get("total_requests", 0),
         success_count=stats.get("success_count", 0),
@@ -250,8 +282,24 @@ async def get_task_stats(run_id: str):
         p50_first_resp_time=stats.get("p50_first_resp_time", 0.0),
         p95_first_resp_time=stats.get("p95_first_resp_time", 0.0),
         p99_first_resp_time=stats.get("p99_first_resp_time", 0.0),
+        avg_last_resp_time=stats.get("avg_last_resp_time", 0.0),
+        p95_last_resp_time=stats.get("p95_last_resp_time", 0.0),
         avg_char_per_second=stats.get("avg_char_per_second", 0.0),
         avg_token_throughput=stats.get("avg_token_throughput", 0.0),
+        avg_token_per_second=stats.get("avg_token_per_second", 0.0),
+        avg_token_per_second_with_calltime=stats.get("avg_token_per_second_with_calltime", 0.0),
+        avg_input_tokens=stats.get("avg_input_tokens", 0.0),
+        avg_output_tokens=stats.get("avg_output_tokens", 0.0),
+        total_input_tokens=stats.get("total_input_tokens", 0),
+        total_output_tokens=stats.get("total_output_tokens", 0),
+    )
+    return JSONResponse(
+        content=response.model_dump(mode="json"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 
@@ -273,12 +321,9 @@ async def get_quick_report(run_id: str):
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    from fastapi import Response
     response = QuickReportResponse(**report)
-    # Add headers to prevent client-side caching
-    return Response(
-        content=response.model_dump_json(),
-        media_type="application/json",
+    return JSONResponse(
+        content=response.model_dump(mode="json"),
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",

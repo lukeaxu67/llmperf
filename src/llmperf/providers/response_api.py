@@ -13,6 +13,18 @@ from .streaming import StreamAccumulator
 
 logger = logging.getLogger(__name__)
 
+_INTERNAL_OPTION_KEYS = {
+    "api_url",
+    "api_key",
+    "timeout",
+    "default_headers",
+    "messages_mode",
+    "stream_debug",
+    "extra_body",
+    "extra_headers",
+    "extra_header",
+}
+
 
 def _event_to_dict(event: Any) -> Dict[str, Any]:
     try:
@@ -54,19 +66,28 @@ class ResponsesProvider(BaseProvider):
 
     def invoke(self, request: ProviderRequest) -> RunRecord:
         client = self._client(request.options)
+        extra_body = request.options.get("extra_body")
+        extra_headers = request.options.get("extra_headers") or request.options.get("extra_header")
+        forwarded_options = {
+            key: value
+            for key, value in request.options.items()
+            if key not in _INTERNAL_OPTION_KEYS
+        }
         record = RunRecord(
             run_id=request.run_id,
             executor_id=request.executor_id,
             dataset_row_id=request.dataset_row_id,
             provider=request.provider,
             model=request.model,
+            request_params={
+                **forwarded_options,
+                "extra_body": extra_body or {},
+                "extra_headers": extra_headers or {},
+            },
         )
         accumulator = StreamAccumulator(record, debug=request.options.get("stream_debug"))
         stream_failed = False
         final_ts = None
-
-        extra_body = request.options.get("extra_body")
-        extra_headers = request.options.get("extra_headers") or request.options.get("extra_header")
         try:
             stream = client.responses.create(
                 model=request.model,
@@ -75,6 +96,7 @@ class ResponsesProvider(BaseProvider):
                 extra_headers=extra_headers,
                 extra_body=extra_body,
                 timeout=request.options.get("timeout", 300),
+                **forwarded_options,
             )
             items: Dict[str, Dict[str, Any]] = {}
             for event in stream:

@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from .routers import analysis, tasks, websocket, config, datasets, pricing
+from .routers import analysis, tasks, websocket, config, datasets, pricing, mock_openai
 from .services.analysis_service import AnalysisService
 from .services.task_service import TaskService
 
@@ -157,6 +157,7 @@ def create_app(
         prefix="/api/pricing",
         tags=["pricing"],
     )
+    app.include_router(mock_openai.router)
 
     # Health check endpoint
     @app.get("/health", tags=["health"])

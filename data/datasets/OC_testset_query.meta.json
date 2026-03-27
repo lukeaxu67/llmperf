@@ -1,0 +1,16 @@
+{
+  "name": "OC_testset_query",
+  "description": "Converted from OC_testset-query.jsonl to LLMPerf JSONL testcase format.",
+  "file_path": "OC_testset_query.jsonl",
+  "file_type": "jsonl",
+  "row_count": 173,
+  "columns": [
+    "id",
+    "messages",
+    "metadata"
+  ],
+  "created_at": 1774618656,
+  "updated_at": 1774618656,
+  "file_size": 18663957,
+  "encoding": "utf-8"
+}

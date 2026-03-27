@@ -1,0 +1,16 @@
+{
+  "name": "CC_testset_query",
+  "description": "Converted from CC_testset-query.jsonl to LLMPerf JSONL testcase format.",
+  "file_path": "CC_testset_query.jsonl",
+  "file_type": "jsonl",
+  "row_count": 300,
+  "columns": [
+    "id",
+    "messages",
+    "metadata"
+  ],
+  "created_at": 1774618656,
+  "updated_at": 1774618656,
+  "file_size": 31585331,
+  "encoding": "utf-8"
+}
