@@ -198,19 +198,39 @@ class HuoshanChatProvider(OpenAIChatProvider):
     env_prefix = "HUOSHAN"
 
 
-class DefaultVendorProvider(OpenAIChatProvider):
-    pass
+class OpenAIProvider(OpenAIChatProvider):
+    env_prefix = "OPENAI"
+
+
+class QianwenChatProvider(OpenAIChatProvider):
+    env_prefix = "QIANWEN"
+
+
+class ZhipuChatProvider(OpenAIChatProvider):
+    env_prefix = "ZHIPU"
+
+
+class DeepSeekChatProvider(OpenAIChatProvider):
+    env_prefix = "DEEPSEEK"
+
+
+class HunyuanChatProvider(OpenAIChatProvider):
+    env_prefix = "HUNYUAN"
+
+
+class MoonshotChatProvider(OpenAIChatProvider):
+    env_prefix = "MOONSHOT"
 
 
 PROVIDER_MAPPING = {
-    "openai": DefaultVendorProvider,
-    "qianwen": DefaultVendorProvider,
-    "zhipu": DefaultVendorProvider,
-    "deepseek": DefaultVendorProvider,
+    "openai": OpenAIProvider,
+    "qianwen": QianwenChatProvider,
+    "zhipu": ZhipuChatProvider,
+    "deepseek": DeepSeekChatProvider,
     "spark": SparkChatProvider,
-    "hunyuan": DefaultVendorProvider,
+    "hunyuan": HunyuanChatProvider,
     "huoshan": HuoshanChatProvider,
-    "moonshot": DefaultVendorProvider,
+    "moonshot": MoonshotChatProvider,
 }
 
 

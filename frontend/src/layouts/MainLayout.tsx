@@ -15,19 +15,19 @@ import type { MenuProps } from 'antd'
 const { Header, Sider, Content } = Layout
 
 const menuItems: MenuProps['items'] = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表板' },
+  { key: '/dashboard', icon: <DashboardOutlined />, label: '系统概览' },
   { key: '/tasks', icon: <RocketOutlined />, label: '任务管理' },
   { key: '/pricing', icon: <DollarOutlined />, label: '成本监控' },
-  { key: '/datasets', icon: <DatabaseOutlined />, label: '数据集' },
+  { key: '/datasets', icon: <DatabaseOutlined />, label: '数据管理' },
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
 
 const pageTitles: Record<string, string> = {
-  '/dashboard': '仪表板',
+  '/dashboard': '系统概览',
   '/tasks': '任务管理',
   '/tasks/create': '创建任务',
   '/pricing': '成本监控',
-  '/datasets': '数据集',
+  '/datasets': '数据管理',
   '/settings': '系统设置',
 }
 

@@ -199,10 +199,13 @@ export default function Settings() {
                   itemLayout="horizontal"
                   dataSource={[
                     { name: 'OpenAI', env: 'OPENAI_API_KEY', configured: true },
+                    { name: '通义千问', env: 'QIANWEN_API_KEY', configured: false },
                     { name: '智谱 AI', env: 'ZHIPU_API_KEY', configured: false },
                     { name: 'DeepSeek', env: 'DEEPSEEK_API_KEY', configured: false },
                     { name: '讯飞星火', env: 'IFLYTEK_API_KEY', configured: false },
                     { name: '火山引擎', env: 'HUOSHAN_API_KEY', configured: false },
+                    { name: '腾讯混元', env: 'HUNYUAN_API_KEY', configured: false },
+                    { name: '月之暗面', env: 'MOONSHOT_API_KEY', configured: false },
                   ]}
                   renderItem={(item) => (
                     <List.Item>

@@ -11,7 +11,6 @@ import {
   Popconfirm,
   Tag,
   Descriptions,
-  List,
   Empty,
   Spin,
   Progress,
@@ -25,6 +24,7 @@ import {
 } from '@ant-design/icons'
 import type { UploadProps } from 'antd'
 import { datasetApi, Dataset } from '@/services/api'
+import DatasetPreviewList from '@/components/DatasetPreviewList'
 
 const { Dragger } = Upload
 const { Title, Text, Paragraph } = Typography
@@ -200,7 +200,7 @@ export default function Datasets() {
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 16 }}>数据集管理</Title>
+      <Title level={4} style={{ marginBottom: 16 }}>数据管理</Title>
 
       {/* Upload Area */}
       <Card style={{ marginBottom: 24 }}>
@@ -267,26 +267,8 @@ export default function Datasets() {
               <Descriptions.Item label="预览数量">{previewData.preview_rows}</Descriptions.Item>
             </Descriptions>
 
-            <Title level={5}>数据示例</Title>
-            <List
-              size="small"
-              bordered
-              dataSource={previewData.records?.slice(0, 5) || []}
-              renderItem={(record: any, index: number) => (
-                <List.Item>
-                  <div style={{ width: '100%' }}>
-                    <Text strong>ID: {record.id || index}</Text>
-                    <div style={{ marginTop: 8 }}>
-                      {record.messages?.map((msg: any, i: number) => (
-                        <Tag key={i} color={msg.role === 'user' ? 'blue' : msg.role === 'assistant' ? 'green' : 'default'}>
-                          {msg.role}: {msg.content?.slice(0, 50)}...
-                        </Tag>
-                      ))}
-                    </div>
-                  </div>
-                </List.Item>
-              )}
-            />
+            <Title level={5} style={{ marginBottom: 12 }}>数据示例（前 5 条）</Title>
+            <DatasetPreviewList records={previewData.records?.slice(0, 5) || []} />
           </div>
         ) : (
           <Empty description="无法加载预览数据" />

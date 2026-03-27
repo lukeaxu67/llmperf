@@ -12,9 +12,9 @@ info: "Web Task"
 dataset:
   source:
     type: "jsonl"
-    name: "test_2"
+    name: "test_3"
     config:
-      path: "resource/test_2.jsonl"
+      path: "resource/test_3.jsonl"
   iterator:
     mutation_chain: ["identity"]
     max_rounds: 1
@@ -54,7 +54,7 @@ def test_create_task_normalizes_dataset_path_for_web_tasks():
     assert response.status_code == 200
     run_id = response.json()["run_id"]
     stored_config = get_task_service()._config_contents[run_id]
-    assert "data/datasets/test_2.jsonl" in stored_config.replace("\\", "/").lower()
+    assert "data/datasets/test_3.jsonl" in stored_config.replace("\\", "/").lower()
 
 
 def test_openai_chat_provider_forwards_extra_headers(monkeypatch):

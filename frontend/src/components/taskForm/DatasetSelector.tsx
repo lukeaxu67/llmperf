@@ -8,9 +8,10 @@ import { Radio, Card, Input, List, Spin, Empty, Tag, Space, Typography } from 'a
 import { DatabaseOutlined, FileTextOutlined } from '@ant-design/icons'
 import { datasetApi, Dataset } from '@/services/api'
 import useTaskFormStore from '@/stores/taskFormStore'
+import DatasetPreviewList from '@/components/DatasetPreviewList'
 
 const { TextArea } = Input
-const { Text, Paragraph } = Typography
+const { Text } = Typography
 
 export default function DatasetSelector() {
   const { selectedDataset, setSelectedDataset, taskDescription, setTaskDescription } = useTaskFormStore()
@@ -148,25 +149,7 @@ export default function DatasetSelector() {
             <Spin tip="加载预览..." />
           ) : previewData.length === 0 ? (
             <Empty description="无法加载预览数据" />
-          ) : (
-            <List
-              size="small"
-              dataSource={previewData}
-              renderItem={(item, index) => (
-                <List.Item>
-                  <div style={{ width: '100%' }}>
-                    <Tag>{index + 1}</Tag>
-                    <Paragraph
-                      ellipsis={{ rows: 2, expandable: true }}
-                      style={{ marginBottom: 0, display: 'inline' }}
-                    >
-                      {typeof item === 'string' ? item : JSON.stringify(item)}
-                    </Paragraph>
-                  </div>
-                </List.Item>
-              )}
-            />
-          )}
+          ) : <DatasetPreviewList records={previewData} />}
         </Card>
       )}
     </div>

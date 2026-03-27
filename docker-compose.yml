@@ -30,10 +30,14 @@ services:
       # API Keys (pass from .env or host environment)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - QIANWEN_API_KEY=${QIANWEN_API_KEY:-}
+      - QIANWEN_BASE_URL=${QIANWEN_BASE_URL:-}
       - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - IFLYTEK_API_KEY=${IFLYTEK_API_KEY:-}
       - HUOSHAN_API_KEY=${HUOSHAN_API_KEY:-}
+      - HUNYUAN_API_KEY=${HUNYUAN_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
       # Notification settings
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}

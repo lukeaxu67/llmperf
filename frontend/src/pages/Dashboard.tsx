@@ -108,7 +108,7 @@ export default function Dashboard() {
 
   // Task status distribution chart config
   const statusPieConfig = {
-    appendPadding: 10,
+    appendPadding: 12,
     data: [
       { type: '运行中', value: stats.runningTasks },
       { type: '已完成', value: stats.completedTasks },
@@ -117,8 +117,8 @@ export default function Dashboard() {
     ],
     angleField: 'value',
     colorField: 'type',
-    radius: 0.8,
-    innerRadius: 0.6,
+    radius: 0.68,
+    innerRadius: 0.46,
     color: ['#1677ff', '#52c41a', '#ff4d4f', '#d9d9d9'],
     label: {
       type: 'inner',
@@ -131,6 +131,12 @@ export default function Dashboard() {
     },
     legend: {
       position: 'bottom' as const,
+    },
+    tooltip: {
+      formatter: (datum: { type: string; value: number }) => ({
+        name: datum.type,
+        value: datum.value,
+      }),
     },
     interactions: [{ type: 'element-selected' }, { type: 'element-active' }],
   }
@@ -221,7 +227,7 @@ export default function Dashboard() {
               </a>
               <a href="/datasets">
                 <Tag color="green" style={{ padding: '8px 16px', fontSize: 14 }}>
-                  数据集管理
+                  数据管理
                 </Tag>
               </a>
             </Space>
