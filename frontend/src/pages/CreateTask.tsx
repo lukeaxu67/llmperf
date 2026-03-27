@@ -216,7 +216,7 @@ export default function CreateTask() {
                   测试运行
                 </Button>
                 <Alert
-                  message="测试运行将使用第一条数据进行单次测试，结果不会保存"
+                  message="测试运行会使用第一条数据，对所有执行器各执行一次，结果不会保存"
                   type="info"
                   showIcon
                   style={{ display: 'inline-flex' }}

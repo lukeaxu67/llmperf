@@ -1,8 +1,3 @@
-/**
- * Test run modal component
- * Run a single test request and display results
- */
-
 import { useState } from 'react'
 import {
   Modal,
@@ -10,6 +5,7 @@ import {
   Space,
   Typography,
   Descriptions,
+  Collapse,
   Spin,
   Alert,
   Card,
@@ -80,15 +76,15 @@ export default function TestRunModal({
 
   return (
     <Modal
-      title={
+      title={(
         <Space>
           <PlayCircleOutlined />
           <span>测试运行</span>
         </Space>
-      }
+      )}
       open={open}
       onCancel={handleClose}
-      width={700}
+      width={760}
       footer={[
         <Button key="close" onClick={handleClose}>
           关闭
@@ -106,7 +102,7 @@ export default function TestRunModal({
     >
       <Alert
         message="测试运行说明"
-        description="将使用配置中的第一个执行器，对数据集的第一条记录进行测试运行。测试结果不会保存到数据库。"
+        description="将使用数据集第一条记录，对当前配置中的每个执行器分别执行一次测试。结果只用于校验配置，不会写入数据库。"
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
@@ -133,105 +129,118 @@ export default function TestRunModal({
 
       {result && !loading && (
         <div>
-          {/* Status Card */}
           <Card size="small" style={{ marginBottom: 16 }}>
-            <Space size="large">
+            <Space size="large" wrap>
               {result.success ? (
                 <Tag icon={<CheckCircleOutlined />} color="success" style={{ fontSize: 14, padding: '4px 8px' }}>
-                  测试成功
+                  全部执行器测试成功
                 </Tag>
               ) : (
                 <Tag icon={<CloseCircleOutlined />} color="error" style={{ fontSize: 14, padding: '4px 8px' }}>
-                  测试失败
+                  存在执行器测试失败
                 </Tag>
               )}
               <Text type="secondary">
-                总耗时: <Text strong>{result.duration_ms.toFixed(0)} ms</Text>
+                已测试执行器数: <Text strong>{result.results?.length || 0}</Text>
               </Text>
             </Space>
           </Card>
 
-          {result.success ? (
-            <>
-              {/* Metrics */}
-              <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
-                <Descriptions.Item
-                  label={
-                    <Space>
-                      <ClockCircleOutlined />
-                      首字延迟
-                    </Space>
-                  }
-                >
-                  <Tag color={getLatencyColor(result.first_token_ms)}>
-                    {result.first_token_ms.toFixed(0)} ms
+          <Collapse
+            defaultActiveKey={(result.results || []).map((item) => item.executor_id)}
+            items={(result.results || []).map((item) => ({
+              key: item.executor_id,
+              label: (
+                <Space wrap>
+                  <Text strong>{item.executor_name}</Text>
+                  <Tag color={item.success ? 'success' : 'error'}>
+                    {item.success ? '成功' : '失败'}
                   </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item
-                  label={
-                    <Space>
-                      <ThunderboltOutlined />
-                      吞吐量
-                    </Space>
-                  }
-                >
-                  <Tag color={getTpsColor(result.tokens_per_second)}>
-                    {result.tokens_per_second.toFixed(1)} TPS
-                  </Tag>
-                </Descriptions.Item>
-              </Descriptions>
+                  <Text type="secondary">{item.provider}/{item.model}</Text>
+                </Space>
+              ),
+              children: (
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <Descriptions bordered size="small" column={2}>
+                    <Descriptions.Item
+                      label={(
+                        <Space>
+                          <ClockCircleOutlined />
+                          首响
+                        </Space>
+                      )}
+                    >
+                      <Tag color={getLatencyColor(item.first_token_ms)}>
+                        {item.first_token_ms.toFixed(0)} ms
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item
+                      label={(
+                        <Space>
+                          <ThunderboltOutlined />
+                          token速率
+                        </Space>
+                      )}
+                    >
+                      <Tag color={getTpsColor(item.tokens_per_second)}>
+                        {item.tokens_per_second.toFixed(1)} TPS
+                      </Tag>
+                    </Descriptions.Item>
+                  </Descriptions>
 
-              {/* Latency Progress */}
-              <Card size="small" title="首字延迟分析" style={{ marginBottom: 16 }}>
-                <Progress
-                  percent={Math.min((result.first_token_ms / 2000) * 100, 100)}
-                  status={result.first_token_ms < 500 ? 'success' : result.first_token_ms < 1000 ? 'normal' : 'exception'}
-                  format={() => `${result.first_token_ms.toFixed(0)} ms`}
-                />
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {result.first_token_ms < 200
-                    ? '优秀 - 响应非常快'
-                    : result.first_token_ms < 500
-                    ? '良好 - 响应速度正常'
-                    : result.first_token_ms < 1000
-                    ? '一般 - 响应稍慢'
-                    : '较慢 - 建议优化'}
-                </Text>
-              </Card>
+                  <Card size="small" title="首响分析">
+                    <Progress
+                      percent={Math.min((item.first_token_ms / 2000) * 100, 100)}
+                      status={item.first_token_ms < 500 ? 'success' : item.first_token_ms < 1000 ? 'normal' : 'exception'}
+                      format={() => `${item.first_token_ms.toFixed(0)} ms`}
+                    />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {item.first_token_ms < 200
+                        ? '优秀，响应非常快'
+                        : item.first_token_ms < 500
+                        ? '良好，响应速度正常'
+                        : item.first_token_ms < 1000
+                        ? '一般，响应略慢'
+                        : '偏慢，建议进一步排查'}
+                    </Text>
+                  </Card>
 
-              {/* Response Content */}
-              <Card
-                size="small"
-                title={
-                  <Space>
-                    <FileTextOutlined />
-                    <span>响应内容</span>
-                  </Space>
-                }
-              >
-                <Paragraph
-                  ellipsis={{ rows: 6, expandable: true, symbol: '展开' }}
-                  style={{
-                    marginBottom: 0,
-                    padding: 12,
-                    background: '#f5f5f5',
-                    borderRadius: 4,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {result.response || '(无内容)'}
-                </Paragraph>
-              </Card>
-            </>
-          ) : (
-            <Alert
-              message="错误信息"
-              description={result.error || 'Unknown error'}
-              type="error"
-              showIcon
-            />
-          )}
+                  <Card
+                    size="small"
+                    title={(
+                      <Space>
+                        <FileTextOutlined />
+                        <span>响应内容</span>
+                      </Space>
+                    )}
+                  >
+                    {item.success ? (
+                      <Paragraph
+                        ellipsis={{ rows: 6, expandable: true, symbol: '展开' }}
+                        style={{
+                          marginBottom: 0,
+                          padding: 12,
+                          background: '#f5f5f5',
+                          borderRadius: 4,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {item.response || '(无内容)'}
+                      </Paragraph>
+                    ) : (
+                      <Alert
+                        message="执行失败"
+                        description={item.error || 'Unknown error'}
+                        type="error"
+                        showIcon
+                      />
+                    )}
+                  </Card>
+                </Space>
+              ),
+            }))}
+          />
         </div>
       )}
 
@@ -239,7 +248,7 @@ export default function TestRunModal({
         <div style={{ textAlign: 'center', padding: '40px 0', color: '#999' }}>
           <PlayCircleOutlined style={{ fontSize: 48, marginBottom: 16 }} />
           <Paragraph type="secondary">
-            点击"开始测试"运行一次测试请求
+            点击“开始测试”执行一轮首样本校验
           </Paragraph>
         </div>
       )}

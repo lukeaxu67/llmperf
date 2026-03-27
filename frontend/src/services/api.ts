@@ -364,6 +364,18 @@ export interface TestRunResponse {
   tokens_per_second: number
   response: string
   error: string
+  results?: Array<{
+    executor_id: string
+    executor_name: string
+    provider: string
+    model: string
+    success: boolean
+    duration_ms: number
+    first_token_ms: number
+    tokens_per_second: number
+    response: string
+    error: string
+  }>
 }
 
 // Extend taskApi with testRun

@@ -126,6 +126,7 @@ class TestRunResponse(BaseModel):
     tokens_per_second: float = 0
     response: str = ""
     error: str = ""
+    results: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def get_service() -> TaskService:
@@ -485,7 +486,7 @@ async def delete_task(run_id: str):
     summary="Run a test with first record only",
 )
 async def test_run(request: TestRunRequest = Body(...)):
-    """Run a test with the first record only, without saving to database.
+    """Run a one-record smoke test for all executors, without saving to database.
 
     This endpoint is useful for validating executor configurations before
     running a full benchmark task.
@@ -504,9 +505,6 @@ async def test_run(request: TestRunRequest = Body(...)):
                 error="No executors configured",
             )
 
-        # Get first executor
-        executor_config = config.executors[0]
-
         # Get first record from dataset
         dataset_source = create_source(
             config.dataset.source.type,
@@ -521,49 +519,80 @@ async def test_run(request: TestRunRequest = Body(...)):
             )
 
         first_record = records[0]
-
-        # Create provider and run single request
-        provider = create_provider(
-            executor_config.type,
-            executor_config.impl or "default",
-            executor_config.type,
-        )
-
         from llmperf.providers.base import ProviderRequest
 
-        test_request = ProviderRequest(
-            run_id="test-run",
-            executor_id=executor_config.id,
-            dataset_row_id=first_record.id or "test-0",
-            provider=executor_config.type,
-            model=executor_config.model or "unknown",
-            messages=[msg.model_dump() for msg in first_record.messages],
-            options=executor_config.param or {},
-        )
+        results: List[Dict[str, Any]] = []
+        overall_success = True
 
-        # Override API settings if provided
-        if executor_config.api_url:
-            test_request.options["api_url"] = executor_config.api_url
-        if executor_config.api_key:
-            test_request.options["api_key"] = executor_config.api_key
+        for executor_config in config.executors:
+            provider = create_provider(
+                executor_config.type,
+                executor_config.impl or "default",
+                executor_config.type,
+            )
 
-        start_time = time.time()
-        record = provider.invoke(test_request)
-        end_time = time.time()
+            test_request = ProviderRequest(
+                run_id="test-run",
+                executor_id=executor_config.id,
+                dataset_row_id=first_record.id or "test-0",
+                provider=executor_config.type,
+                model=executor_config.model or "unknown",
+                messages=[msg.model_dump() for msg in first_record.messages],
+                options=dict(executor_config.param or {}),
+            )
 
-        duration_ms = (end_time - start_time) * 1000
+            if executor_config.api_url:
+                test_request.options["api_url"] = executor_config.api_url
+            if executor_config.api_key:
+                test_request.options["api_key"] = executor_config.api_key
 
-        # Calculate metrics
-        first_token_ms = record.first_resp_time or 0
-        tokens_per_second = record.token_per_second if record.atokens else 0
+            start_time = time.time()
+            try:
+                record = provider.invoke(test_request)
+                error_message = "" if record.status == 200 else f"Request failed with status {record.status}"
+                success = record.status == 200
+                response_text = "".join(record.content)
+                first_token_ms = record.first_resp_time or 0
+                tokens_per_second = record.token_per_second if record.atokens else 0
+            except Exception as executor_exc:
+                logger.exception("Test run failed for executor %s: %s", executor_config.id, executor_exc)
+                record = None
+                success = False
+                error_message = str(executor_exc)
+                response_text = ""
+                first_token_ms = 0
+                tokens_per_second = 0
+            duration_ms = (time.time() - start_time) * 1000
+            overall_success = overall_success and success
 
+            results.append(
+                {
+                    "executor_id": executor_config.id,
+                    "executor_name": executor_config.name,
+                    "provider": executor_config.type,
+                    "model": executor_config.model or "unknown",
+                    "success": success,
+                    "duration_ms": duration_ms,
+                    "first_token_ms": first_token_ms,
+                    "tokens_per_second": tokens_per_second,
+                    "response": response_text,
+                    "error": error_message,
+                }
+            )
+
+        first_result = results[0]
         return TestRunResponse(
-            success=record.status == 200,
-            duration_ms=duration_ms,
-            first_token_ms=first_token_ms,
-            tokens_per_second=tokens_per_second,
-            response="".join(record.content),
-            error="" if record.status == 200 else f"Request failed with status {record.status}",
+            success=overall_success,
+            duration_ms=first_result["duration_ms"],
+            first_token_ms=first_result["first_token_ms"],
+            tokens_per_second=first_result["tokens_per_second"],
+            response=first_result["response"],
+            error="; ".join(
+                f'{item["executor_name"]}: {item["error"]}'
+                for item in results
+                if item["error"]
+            ),
+            results=results,
         )
 
     except Exception as e:

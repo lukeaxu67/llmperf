@@ -69,11 +69,31 @@ export interface IteratorConfig {
 // Mutation methods
 export type MutationMethod = 'identity' | 'rdmprefix' | 'rmdupspaces' | 'rmcomments'
 
-export const MUTATION_METHODS: { value: MutationMethod; label: string; description: string }[] = [
-  { value: 'identity', label: 'Identity', description: '不进行任何变换' },
-  { value: 'rdmprefix', label: 'Remove Prefix', description: '移除prompt前缀' },
-  { value: 'rmdupspaces', label: 'Remove Duplicate Spaces', description: '移除重复空格' },
-  { value: 'rmcomments', label: 'Remove Comments', description: '移除注释' },
+export const MUTATION_METHODS: { value: MutationMethod; label: string; description: string; example: string }[] = [
+  {
+    value: 'identity',
+    label: 'Identity',
+    description: '不做任何改写，直接使用原始样本。',
+    example: '示例：`请解释量子纠缠。` -> `请解释量子纠缠。`',
+  },
+  {
+    value: 'rdmprefix',
+    label: 'Random Prefix',
+    description: '在最后一条消息前追加一段随机前缀，用于测试模型对无关前缀噪声的鲁棒性。',
+    example: '示例：`请总结这篇文章` -> `IGNORE-THIS:A1b2C3d4. Pay attention to my question. My question is: 请总结这篇文章`',
+  },
+  {
+    value: 'rmdupspaces',
+    label: 'Collapse Spaces',
+    description: '压缩连续空格和 Tab，保留换行结构，适合测试模型对排版噪声的敏感度。',
+    example: '示例：`请   总结\\t这段  内容` -> `请 总结 这段 内容`',
+  },
+  {
+    value: 'rmcomments',
+    label: 'Remove Comments',
+    description: '删除常见注释块和独立注释行，例如 `#`、`//`、`--`、`/* */`、`<!-- -->`。',
+    example: '示例：`# 注释\\n请解释代码` -> `请解释代码`',
+  },
 ]
 
 // Dataset source configuration
@@ -159,6 +179,18 @@ export interface TestRunResponse {
   tokens_per_second: number
   response: string
   error: string
+  results?: Array<{
+    executor_id: string
+    executor_name: string
+    provider: string
+    model: string
+    success: boolean
+    duration_ms: number
+    first_token_ms: number
+    tokens_per_second: number
+    response: string
+    error: string
+  }>
 }
 
 // Helper function to generate unique executor ID

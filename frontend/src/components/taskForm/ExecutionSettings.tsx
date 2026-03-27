@@ -107,6 +107,10 @@ export default function ExecutionSettings() {
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {method.description}
                     </Text>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {method.example}
+                    </Text>
                   </div>
                 </Space>
               </Card>

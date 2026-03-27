@@ -170,3 +170,60 @@ executors:
         assert captured["headers"]["x-source"] == "test-run"
         assert captured["body"]["metadata"] == {"case": "task-test-run"}
         assert captured["body"]["temperature"] == 0.4
+
+
+def test_test_run_executes_all_executors(tmp_path: Path):
+    dataset_path = tmp_path / "multi.jsonl"
+    dataset_path.write_text(
+        json.dumps({"id": "1", "messages": [{"role": "user", "content": "ping all executors"}]}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with LiveServer() as mock_base:
+        _json_request(f"{mock_base}/mock/v1/requests", method="DELETE")
+        config_content = f"""
+info: "Multi Executor Test"
+dataset:
+  source:
+    type: "jsonl"
+    name: "multi"
+    config:
+      path: "{dataset_path.as_posix()}"
+executors:
+  - id: "exec-a"
+    name: "Executor A"
+    type: "openai"
+    impl: "chat"
+    concurrency: 1
+    model: "gpt-4o-mini"
+    api_url: "{mock_base}/mock/v1"
+    api_key: "sk-a"
+    param:
+      extra_headers:
+        x-executor: "a"
+  - id: "exec-b"
+    name: "Executor B"
+    type: "openai"
+    impl: "chat"
+    concurrency: 1
+    model: "gpt-4o-mini"
+    api_url: "{mock_base}/mock/v1"
+    api_key: "sk-b"
+    param:
+      extra_headers:
+        x-executor: "b"
+"""
+
+        with TestClient(create_app()) as client:
+            response = client.post("/api/tasks/test-run", json={"config_content": config_content})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert len(body["results"]) == 2
+        assert {item["executor_id"] for item in body["results"]} == {"exec-a", "exec-b"}
+
+        captured = _json_request(f"{mock_base}/mock/v1/requests")
+        assert len(captured["items"]) == 2
+        assert {item["headers"]["x-executor"] for item in captured["items"]} == {"a", "b"}

@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import random
+import re
 import string
 from typing import Callable, Dict, Iterable
-from .types import TestCase
+
 from .mutation_context import MutationContext
+from .types import TestCase
 
 ChainStep = Callable[[TestCase, MutationContext], TestCase]
 STEP_REGISTRY: Dict[str, ChainStep] = {}
@@ -20,11 +24,9 @@ register_step("identity", identity)
 
 
 def rdmprefix(case: TestCase, ctx: MutationContext) -> TestCase:
-    """在问题前面添加 IGNORE-THIS 前缀来干扰模型"""
+    """Add a randomized benign prefix before the final message content."""
     mutated = case.model_copy(deep=True)
-    # 生成随机的8位前缀
-    random_prefix = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-    # 在最后一条消息前添加前缀
+    random_prefix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
     last_message = mutated.messages[-1]
     prefix = f"IGNORE-THIS:{random_prefix}. Pay attention to my question. My question is: "
     last_message.content = prefix + last_message.content
@@ -32,6 +34,47 @@ def rdmprefix(case: TestCase, ctx: MutationContext) -> TestCase:
 
 
 register_step("rdmprefix", rdmprefix)
+
+
+def _collapse_duplicate_spaces(text: str) -> str:
+    normalized_lines = [re.sub(r"[ \t]{2,}", " ", line).strip() for line in text.splitlines()]
+    collapsed = "\n".join(normalized_lines).strip()
+    return collapsed or text.strip()
+
+
+def rmdupspaces(case: TestCase, ctx: MutationContext) -> TestCase:
+    """Collapse repeated spaces and tabs while preserving line breaks."""
+    mutated = case.model_copy(deep=True)
+    for message in mutated.messages:
+        message.content = _collapse_duplicate_spaces(message.content)
+    return mutated
+
+
+register_step("rmdupspaces", rmdupspaces)
+
+
+def _strip_comments(text: str) -> str:
+    without_block_comments = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    without_html_comments = re.sub(r"<!--.*?-->", "", without_block_comments, flags=re.DOTALL)
+    cleaned_lines = []
+    for line in without_html_comments.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//") or stripped.startswith("--"):
+            continue
+        cleaned_lines.append(line)
+    cleaned = "\n".join(cleaned_lines).strip()
+    return cleaned or text.strip()
+
+
+def rmcomments(case: TestCase, ctx: MutationContext) -> TestCase:
+    """Remove common standalone comment lines and block comments from messages."""
+    mutated = case.model_copy(deep=True)
+    for message in mutated.messages:
+        message.content = _strip_comments(message.content)
+    return mutated
+
+
+register_step("rmcomments", rmcomments)
 
 
 class MutationChain:
