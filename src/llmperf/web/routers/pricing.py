@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
+from ..services.pricing_service import get_pricing_service
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ async def add_pricing(request: PricingCreateRequest):
             effective_at=request.effective_at,
             note=request.note,
         )
+        get_pricing_service().invalidate_cache(record.provider, record.model)
         return PricingResponse(
             id=record.id,
             provider=record.provider,
@@ -162,48 +164,6 @@ async def list_providers():
     """List all unique provider/model combinations with latest pricing."""
     storage = get_storage()
     return storage.get_providers_models()
-
-
-@router.get(
-    "/{pricing_id}",
-    response_model=PricingResponse,
-    summary="Get pricing record",
-)
-async def get_pricing(pricing_id: int):
-    """Get a specific pricing record."""
-    storage = get_storage()
-    record = storage.get_pricing(pricing_id)
-
-    if not record:
-        raise HTTPException(status_code=404, detail="Pricing record not found")
-
-    return PricingResponse(
-        id=record.id,
-        provider=record.provider,
-        model=record.model,
-        input_price=record.input_price,
-        output_price=record.output_price,
-        cache_read_price=record.cache_read_price,
-        cache_write_price=record.cache_write_price,
-        effective_at=record.effective_at,
-        created_at=record.created_at,
-        note=record.note,
-    )
-
-
-@router.delete(
-    "/{pricing_id}",
-    summary="Delete pricing record",
-)
-async def delete_pricing(pricing_id: int):
-    """Delete a pricing record."""
-    storage = get_storage()
-    success = storage.delete_pricing(pricing_id)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Pricing record not found")
-
-    return {"message": "Pricing record deleted", "id": pricing_id}
 
 
 @router.get(
@@ -297,3 +257,49 @@ async def get_current_price(
             currency="CNY",
             found=False,
         )
+
+
+@router.get(
+    "/{pricing_id}",
+    response_model=PricingResponse,
+    summary="Get pricing record",
+)
+async def get_pricing(pricing_id: int):
+    """Get a specific pricing record."""
+    storage = get_storage()
+    record = storage.get_pricing(pricing_id)
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Pricing record not found")
+
+    return PricingResponse(
+        id=record.id,
+        provider=record.provider,
+        model=record.model,
+        input_price=record.input_price,
+        output_price=record.output_price,
+        cache_read_price=record.cache_read_price,
+        cache_write_price=record.cache_write_price,
+        effective_at=record.effective_at,
+        created_at=record.created_at,
+        note=record.note,
+    )
+
+
+@router.delete(
+    "/{pricing_id}",
+    summary="Delete pricing record",
+)
+async def delete_pricing(pricing_id: int):
+    """Delete a pricing record."""
+    storage = get_storage()
+    record = storage.get_pricing(pricing_id)
+    success = storage.delete_pricing(pricing_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Pricing record not found")
+
+    if record:
+        get_pricing_service().invalidate_cache(record.provider, record.model)
+
+    return {"message": "Pricing record deleted", "id": pricing_id}

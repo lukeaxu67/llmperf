@@ -279,6 +279,14 @@ class Storage:
 
     # ==================== Pricing History Methods ====================
 
+    @staticmethod
+    def _normalize_pricing_provider(provider: str) -> str:
+        return str(provider or "").strip().lower()
+
+    @staticmethod
+    def _normalize_pricing_model(model: str) -> str:
+        return str(model or "").strip()
+
     def add_pricing(
         self,
         provider: str,
@@ -291,6 +299,8 @@ class Storage:
         note: str = "",
     ) -> PricingRecord:
         """Add a new pricing record."""
+        provider = self._normalize_pricing_provider(provider)
+        model = self._normalize_pricing_model(model)
         if effective_at is None:
             effective_at = int(time.time())
 
@@ -329,11 +339,15 @@ class Storage:
     ) -> List[PricingRecord]:
         """List pricing records, optionally filtered by provider/model."""
         with self.db.session() as session:
+            from sqlalchemy import func
+
             query = session.query(PricingHistoryORM)
             if provider:
-                query = query.filter(PricingHistoryORM.provider == provider)
+                normalized_provider = self._normalize_pricing_provider(provider)
+                query = query.filter(func.lower(PricingHistoryORM.provider) == normalized_provider)
             if model:
-                query = query.filter(PricingHistoryORM.model == model)
+                normalized_model = self._normalize_pricing_model(model).lower()
+                query = query.filter(func.lower(PricingHistoryORM.model) == normalized_model)
             query = query.order_by(PricingHistoryORM.effective_at.desc()).limit(limit)
 
             return [
@@ -389,10 +403,14 @@ class Storage:
     ) -> Optional[PricingRecord]:
         """Get the effective pricing for a provider/model at a specific time."""
         with self.db.session() as session:
+            from sqlalchemy import func
+
+            normalized_provider = self._normalize_pricing_provider(provider)
+            normalized_model = self._normalize_pricing_model(model).lower()
             row = (
                 session.query(PricingHistoryORM)
-                .filter(PricingHistoryORM.provider == provider)
-                .filter(PricingHistoryORM.model == model)
+                .filter(func.lower(PricingHistoryORM.provider) == normalized_provider)
+                .filter(func.lower(PricingHistoryORM.model) == normalized_model)
                 .filter(PricingHistoryORM.effective_at <= timestamp)
                 .order_by(PricingHistoryORM.effective_at.desc())
                 .first()

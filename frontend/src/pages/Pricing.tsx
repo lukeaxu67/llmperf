@@ -30,6 +30,7 @@ import {
 import dayjs from 'dayjs'
 import { Line } from '@ant-design/plots'
 import { pricingApi, PricingRecord, CostSummary, TotalCost } from '@/services/api'
+import { EXECUTOR_TYPES } from '@/types/taskConfig'
 
 const { Title, Text } = Typography
 
@@ -43,6 +44,12 @@ export default function Pricing() {
   const [form] = Form.useForm()
   const [providerFilter, setProviderFilter] = useState<string | undefined>()
   const [providers, setProviders] = useState<string[]>([])
+  const providerOptions = Array.from(
+    new Set([
+      ...EXECUTOR_TYPES.filter((item) => item.value !== 'mock').map((item) => item.value),
+      ...providers,
+    ]),
+  ).map((provider) => ({ label: provider, value: provider }))
 
   useEffect(() => {
     fetchData()
@@ -80,12 +87,13 @@ export default function Pricing() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
+      const providerValue = Array.isArray(values.provider) ? values.provider[0] : values.provider
       const effectiveAt = values.effective_at
         ? Math.floor(values.effective_at.valueOf() / 1000)
         : undefined
 
       await pricingApi.add({
-        provider: values.provider,
+        provider: providerValue,
         model: values.model,
         input_price: values.input_price,
         output_price: values.output_price,
@@ -382,7 +390,12 @@ export default function Pricing() {
                 label="厂商"
                 rules={[{ required: true, message: '请输入厂商名称' }]}
               >
-                <Input placeholder="例如: openai, zhipu" />
+                <Select
+                  mode="tags"
+                  options={providerOptions}
+                  tokenSeparators={[',', ' ']}
+                  placeholder="例如: openai, zhipu"
+                />
               </Form.Item>
             </Col>
             <Col span={12}>

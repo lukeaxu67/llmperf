@@ -76,7 +76,9 @@ class PricingService:
         Returns:
             PriceInfo with current pricing, or default zero pricing if not found.
         """
-        key = (provider, model)
+        provider = Storage._normalize_pricing_provider(provider)
+        model = Storage._normalize_pricing_model(model)
+        key = (provider, model.lower())
         now = time.time()
 
         # Check cache
@@ -94,8 +96,8 @@ class PricingService:
 
         if price_record:
             price_info = PriceInfo(
-                provider=provider,
-                model=model,
+                provider=price_record.provider,
+                model=price_record.model,
                 input_price=price_record.input_price,
                 output_price=price_record.output_price,
                 cache_read_price=price_record.cache_read_price,
@@ -124,9 +126,16 @@ class PricingService:
         if provider is None and model is None:
             self._cache.clear()
         elif model is not None and provider is not None:
-            self._cache.pop((provider, model), None)
+            self._cache.pop(
+                (
+                    Storage._normalize_pricing_provider(provider),
+                    Storage._normalize_pricing_model(model).lower(),
+                ),
+                None,
+            )
         elif provider is not None:
-            keys_to_remove = [k for k in self._cache.keys() if k[0] == provider]
+            normalized_provider = Storage._normalize_pricing_provider(provider)
+            keys_to_remove = [k for k in self._cache.keys() if k[0] == normalized_provider]
             for key in keys_to_remove:
                 del self._cache[key]
 
