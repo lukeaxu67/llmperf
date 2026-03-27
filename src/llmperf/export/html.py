@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -604,7 +603,7 @@ class HTMLReportExporter(Exporter):
                 output_path=str(output_path),
                 format=self.format_name,
                 records_exported=len(records),
-                message=f"Successfully exported HTML report",
+                message="Successfully exported HTML report",
                 metadata={
                     "theme": self.html_config.theme,
                     "file_size_bytes": file_size,

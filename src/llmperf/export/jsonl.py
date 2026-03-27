@@ -48,8 +48,6 @@ class JSONLExporter(Exporter):
     """
 
     format_name = "jsonl"
-    file_extension = ".jsonl"
-
     def __init__(self, config: ExportConfig):
         """Initialize JSONL exporter.
 

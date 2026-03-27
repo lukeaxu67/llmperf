@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 
-import pytest
 
 from llmperf.export import (
     ExportConfig,
@@ -15,7 +12,6 @@ from llmperf.export import (
     CSVExporter,
     JSONLExporter,
     HTMLReportExporter,
-    register_exporter,
     exporter_registry,
     create_exporter,
 )

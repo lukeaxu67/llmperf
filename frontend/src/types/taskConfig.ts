@@ -122,6 +122,8 @@ export interface TaskFormState {
   // Step 1: Dataset selection
   taskDescription: string
   selectedDataset: string | null
+  selectedDatasetPath?: string | null
+  selectedDatasetType?: string | null
 
   // Step 2: Execution settings
   iteratorConfig: IteratorConfig

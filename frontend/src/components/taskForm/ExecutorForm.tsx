@@ -21,6 +21,45 @@ interface ExecutorFormProps {
   onCheckPrice?: (provider: string, model: string) => Promise<boolean>
 }
 
+function stringifyJsonObject(value: unknown): string | undefined {
+  if (
+    !value
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || Object.keys(value as Record<string, unknown>).length === 0
+  ) {
+    return undefined
+  }
+
+  return JSON.stringify(value, null, 2)
+}
+
+function parseOptionalJsonObject(value: string | undefined, label: string): Record<string, any> | null {
+  const raw = value?.trim()
+  if (!raw) {
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`${label} must be valid JSON`)
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object`)
+  }
+
+  return parsed as Record<string, any>
+}
+
+function validateJsonObject(label: string) {
+  return async (_: unknown, value?: string) => {
+    parseOptionalJsonObject(value, label)
+  }
+}
+
 export default function ExecutorForm({
   open,
   executor,
@@ -36,10 +75,20 @@ export default function ExecutorForm({
   useEffect(() => {
     if (open) {
       if (executor) {
+        const param = executor.param || {}
+        const {
+          extra_body: extraBody,
+          extra_headers: extraHeaders,
+          extra_header: extraHeader,
+          ...otherParam
+        } = param
         form.setFieldsValue({
           ...executor,
           rate_qps: executor.rate?.qps,
           rate_interval: executor.rate?.interval_seconds,
+          extra_body_json: stringifyJsonObject(extraBody),
+          extra_headers_json: stringifyJsonObject(extraHeaders || extraHeader),
+          other_param_json: stringifyJsonObject(otherParam),
         })
         setPriceStatus(executor.hasPrice ?? null)
       } else {
@@ -63,6 +112,17 @@ export default function ExecutorForm({
             interval_seconds: values.rate_interval || null,
           }
         : null
+      const extraBody = parseOptionalJsonObject(values.extra_body_json, 'Extra Body')
+      const extraHeaders = parseOptionalJsonObject(values.extra_headers_json, 'Extra Headers')
+      const otherParam = parseOptionalJsonObject(values.other_param_json, 'Custom Params') || {}
+      const param = { ...otherParam }
+
+      if (extraBody) {
+        param.extra_body = extraBody
+      }
+      if (extraHeaders) {
+        param.extra_headers = extraHeaders
+      }
 
       const config: ExecutorConfig = {
         id: executor?.id || `executor-${Date.now().toString(36)}`,
@@ -74,7 +134,7 @@ export default function ExecutorForm({
         model: values.model || null,
         api_url: values.api_url || null,
         api_key: values.api_key || null,
-        param: {},
+        param,
         rate,
         hasPrice: priceStatus ?? undefined,
       }
@@ -202,6 +262,42 @@ export default function ExecutorForm({
                 style={{ marginBottom: 16 }}
               />
             )}
+
+            <Form.Item
+              name="extra_headers_json"
+              label="Extra Headers (JSON)"
+              tooltip="OpenAI-compatible extra_headers request option"
+              rules={[{ validator: validateJsonObject('Extra Headers') }]}
+            >
+              <Input.TextArea
+                rows={4}
+                placeholder={'{\n  "x-trace-id": "demo-id"\n}'}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="extra_body_json"
+              label="Extra Body (JSON)"
+              tooltip="OpenAI-compatible extra_body request option"
+              rules={[{ validator: validateJsonObject('Extra Body') }]}
+            >
+              <Input.TextArea
+                rows={5}
+                placeholder={'{\n  "thinking": {\n    "type": "enabled"\n  }\n}'}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="other_param_json"
+              label="Custom Params (JSON)"
+              tooltip="Other request params merged into executor.param"
+              rules={[{ validator: validateJsonObject('Custom Params') }]}
+            >
+              <Input.TextArea
+                rows={4}
+                placeholder={'{\n  "temperature": 0.7,\n  "timeout": 120\n}'}
+              />
+            </Form.Item>
           </>
         )}
 

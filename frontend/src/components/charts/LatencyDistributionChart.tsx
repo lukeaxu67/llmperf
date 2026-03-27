@@ -4,13 +4,13 @@ import { Card, Empty, Spin } from 'antd'
 
 interface LatencyData {
   values: number[]
-  p50: number
-  p90: number
-  p95: number
-  p99: number
-  mean: number
-  std: number
-  cv: number
+  p50?: number
+  p90?: number
+  p95?: number
+  p99?: number
+  mean?: number
+  std?: number
+  cv?: number
 }
 
 interface LatencyDistributionChartProps {
@@ -22,28 +22,59 @@ interface LatencyDistributionChartProps {
 export default function LatencyDistributionChart({
   data,
   loading = false,
-  title = '延迟分布'
+  title = '寤惰繜鍒嗗竷',
 }: LatencyDistributionChartProps) {
-  const { histogramData } = useMemo(() => {
+  const { histogramData, stats } = useMemo(() => {
     if (!data || data.values.length === 0) {
-      return { histogramData: [], boxPlotData: [] }
+      return {
+        histogramData: [],
+        stats: {
+          p50: 0,
+          p90: 0,
+          p95: 0,
+          p99: 0,
+          mean: 0,
+          std: 0,
+          cv: 0,
+        },
+      }
     }
 
-    // Create histogram
+    const sorted = [...data.values].sort((a, b) => a - b)
+    const percentile = (ratio: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))]
+    const mean = data.mean ?? (data.values.reduce((sum, value) => sum + value, 0) / data.values.length)
+    const variance = data.std != null
+      ? data.std * data.std
+      : data.values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / data.values.length
+    const std = data.std ?? Math.sqrt(variance)
+    const cv = data.cv ?? (mean === 0 ? 0 : std / mean)
+
     const min = Math.min(...data.values)
     const max = Math.max(...data.values)
     const binCount = Math.min(50, Math.max(10, Math.floor(Math.sqrt(data.values.length))))
-    const binSize = (max - min) / binCount
+    const binSize = (max - min) / binCount || 1
 
     const histogram: number[][] = []
     for (let i = 0; i < binCount; i++) {
       const binStart = min + i * binSize
-      const count = data.values.filter(v => v >= binStart && v < binStart + binSize).length
+      const isLastBin = i === binCount - 1
+      const count = data.values.filter((value) => (
+        value >= binStart && (isLastBin ? value <= binStart + binSize : value < binStart + binSize)
+      )).length
       histogram.push([binStart, count])
     }
 
     return {
-      histogramData: histogram
+      histogramData: histogram,
+      stats: {
+        p50: data.p50 ?? percentile(0.5),
+        p90: data.p90 ?? percentile(0.9),
+        p95: data.p95 ?? percentile(0.95),
+        p99: data.p99 ?? percentile(0.99),
+        mean,
+        std,
+        cv,
+      },
     }
   }, [data])
 
@@ -53,57 +84,57 @@ export default function LatencyDistributionChart({
       right: '10%',
       bottom: '15%',
       top: '15%',
-      containLabel: true
+      containLabel: true,
     },
     tooltip: {
       trigger: 'axis',
       axisPointer: {
-        type: 'cross'
+        type: 'cross',
       },
       formatter: (params: any) => {
-        let result = params[0].name + ' ms<br/>'
+        let result = `${params[0].name} ms<br/>`
         params.forEach((param: any) => {
           result += `${param.marker} ${param.seriesName}: ${param.value[1]}<br/>`
         })
         return result
-      }
+      },
     },
     xAxis: {
       type: 'category',
-      name: '延迟 (ms)',
+      name: '寤惰繜 (ms)',
       nameLocation: 'middle',
       nameGap: 30,
       axisLabel: {
         rotate: 45,
-        interval: 'auto'
-      }
+        interval: 'auto',
+      },
     },
     yAxis: [
       {
         type: 'value',
-        name: '频次',
-        position: 'left'
-      }
+        name: '棰戞',
+        position: 'left',
+      },
     ],
     series: [
       {
-        name: '请求分布',
+        name: '璇锋眰鍒嗗竷',
         type: 'bar',
         data: histogramData,
         itemStyle: {
-          color: '#5470c6'
+          color: '#5470c6',
         },
-        large: true
-      }
+        large: true,
+      },
     ],
     visualMap: {
       show: false,
       min: 0,
-      max: Math.max(...histogramData.map((d: any) => d[1])),
+      max: Math.max(0, ...histogramData.map((item) => item[1])),
       inRange: {
-        color: ['#c6e2ff', '#1677ff', '#0958d9']
-      }
-    }
+        color: ['#c6e2ff', '#1677ff', '#0958d9'],
+      },
+    },
   }), [histogramData])
 
   if (loading) {
@@ -119,7 +150,7 @@ export default function LatencyDistributionChart({
   if (!data || data.values.length === 0) {
     return (
       <Card title={title}>
-        <Empty description="暂无数据" />
+        <Empty description="鏆傛棤鏁版嵁" />
       </Card>
     )
   }
@@ -127,36 +158,36 @@ export default function LatencyDistributionChart({
   return (
     <Card
       title={title}
-      extra={
+      extra={(
         <div style={{ fontSize: 12, color: '#666' }}>
-          <span>均值: {data.mean.toFixed(2)}ms </span>
-          <span style={{ marginLeft: 16 }}>标准差: {data.std.toFixed(2)}ms </span>
-          <span style={{ marginLeft: 16 }}>CV: {data.cv.toFixed(2)}</span>
+          <span>鍧囧€? {stats.mean.toFixed(2)}ms </span>
+          <span style={{ marginLeft: 16 }}>鏍囧噯宸? {stats.std.toFixed(2)}ms </span>
+          <span style={{ marginLeft: 16 }}>CV: {stats.cv.toFixed(2)}</span>
         </div>
-      }
+      )}
     >
       <ReactECharts option={option} style={{ height: 400 }} opts={{ renderer: 'svg' }} />
       <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: '#666' }}>P50</div>
-          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#1677ff' }}>{data.p50.toFixed(2)}ms</div>
+          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#1677ff' }}>{stats.p50.toFixed(2)}ms</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: '#666' }}>P90</div>
-          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#52c41a' }}>{data.p90.toFixed(2)}ms</div>
+          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#52c41a' }}>{stats.p90.toFixed(2)}ms</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: '#666' }}>P95</div>
-          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#fa8c16' }}>{data.p95.toFixed(2)}ms</div>
+          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#fa8c16' }}>{stats.p95.toFixed(2)}ms</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 12, color: '#666' }}>P99</div>
-          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#f5222d' }}>{data.p99.toFixed(2)}ms</div>
+          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#f5222d' }}>{stats.p99.toFixed(2)}ms</div>
         </div>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 12, color: '#666' }}>极端慢请求比</div>
+          <div style={{ fontSize: 12, color: '#666' }}>鏋佺鎱㈣姹傛瘮</div>
           <div style={{ fontSize: 18, fontWeight: 'bold', color: '#722ed1' }}>
-            {(data.values.filter(v => v > data.p95 * 2).length / data.values.length * 100).toFixed(2)}%
+            {(data.values.filter((value) => value > stats.p95 * 2).length / data.values.length * 100).toFixed(2)}%
           </div>
         </div>
       </div>

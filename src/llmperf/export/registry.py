@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Callable, Dict, Optional, Type
 
 from .base import Exporter, ExportConfig
 

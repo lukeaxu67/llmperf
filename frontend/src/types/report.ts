@@ -71,9 +71,13 @@ export interface LatencyAnalysis {
   cv: number
   by_executor?: Record<string, {
     values: number[]
-    p50: number
-    p95: number
-    p99: number
+    p50?: number
+    p90?: number
+    p95?: number
+    p99?: number
+    mean?: number
+    std?: number
+    cv?: number
   }>
 }
 
@@ -85,6 +89,8 @@ export interface TokenAnalysis {
   by_executor?: Record<string, {
     values: number[]
     avg: number
+    p50?: number
+    p90?: number
   }>
 }
 

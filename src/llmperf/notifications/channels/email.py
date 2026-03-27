@@ -6,7 +6,7 @@ import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from ..base import NotificationChannel, NotificationMessage, NotificationResult, NotificationPriority
 from ..registry import register_channel

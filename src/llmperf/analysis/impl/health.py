@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Dict, List
-from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -16,10 +15,9 @@ from ..base_analysis import BaseAnalysis
 from ..record_query import RecordQuery
 from ..analysis_registry import register_analysis
 from ..statistics import percentile, mean
-from ..timeseries import get_hour_of_day, group_by_time_segment
+from ..timeseries import get_hour_of_day
 
 from llmperf.records.model import RunRecord
-from llmperf.records.storage import Storage
 
 
 @register_analysis("health")
@@ -202,8 +200,8 @@ class HealthAnalysis(BaseAnalysis["HealthAnalysis.Config"]):
         if len(output_lengths) > 10:
             median_length = percentile(output_lengths, 0.5)
             sudden_drops = [
-                l for l in output_lengths
-                if l < median_length * 0.5
+                length for length in output_lengths
+                if length < median_length * 0.5
             ]
         else:
             sudden_drops = []

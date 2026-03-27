@@ -29,7 +29,11 @@ interface TaskFormStore extends TaskFormState {
   setTaskDescription: (description: string) => void
 
   // Dataset selection
-  setSelectedDataset: (dataset: string | null) => void
+  setSelectedDataset: (
+    dataset: string | null,
+    filePath?: string | null,
+    fileType?: string | null,
+  ) => void
 
   // Iterator config
   setIteratorConfig: (config: Partial<IteratorConfig>) => void
@@ -57,6 +61,8 @@ interface TaskFormStore extends TaskFormState {
 const initialState: TaskFormState = {
   taskDescription: '',
   selectedDataset: null,
+  selectedDatasetPath: null,
+  selectedDatasetType: null,
   iteratorConfig: { ...DEFAULT_ITERATOR_CONFIG },
   executors: [],
   currentStep: 0,
@@ -90,7 +96,12 @@ export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
   setTaskDescription: (description) => set({ taskDescription: description }),
 
   // Dataset selection
-  setSelectedDataset: (dataset) => set({ selectedDataset: dataset }),
+  setSelectedDataset: (dataset, filePath, fileType) =>
+    set((state) => ({
+      selectedDataset: dataset,
+      selectedDatasetPath: dataset === null ? null : (filePath ?? state.selectedDatasetPath),
+      selectedDatasetType: dataset === null ? null : (fileType ?? state.selectedDatasetType),
+    })),
 
   // Iterator config
   setIteratorConfig: (config) =>
@@ -168,6 +179,8 @@ export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
     return generateYaml({
       taskDescription: state.taskDescription,
       selectedDataset: state.selectedDataset,
+      selectedDatasetPath: state.selectedDatasetPath,
+      selectedDatasetType: state.selectedDatasetType,
       iteratorConfig: state.iteratorConfig,
       executors: state.executors,
       currentStep: state.currentStep,

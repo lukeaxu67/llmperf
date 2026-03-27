@@ -15,14 +15,19 @@ import {
  * Generate YAML from form state
  */
 export function generateYaml(state: TaskFormState): string {
+  const datasetType = state.selectedDatasetType
+    || state.selectedDatasetPath?.split('.').pop()
+    || 'jsonl'
+  const datasetPath = state.selectedDatasetPath
+    || `data/datasets/${state.selectedDataset || 'default'}.${datasetType}`
   const config: RunConfig = {
     info: state.taskDescription || 'Untitled Task',
     dataset: {
       source: {
-        type: 'jsonl',
+        type: datasetType,
         name: state.selectedDataset || 'default',
         config: {
-          path: `resource/${state.selectedDataset || 'default'}.jsonl`,
+          path: datasetPath,
         },
       },
       iterator: state.iteratorConfig || DEFAULT_ITERATOR_CONFIG,
@@ -61,12 +66,16 @@ export function parseYaml(content: string): TaskFormState {
 
     // Extract dataset name from source config
     let datasetName = config.dataset?.source?.name
+    const datasetPath = config.dataset?.source?.config?.path as string | undefined
+    let datasetType = config.dataset?.source?.type || null
     if (!datasetName && config.dataset?.source?.config?.path) {
       // Try to extract from path
       const path = config.dataset.source.config.path as string
-      const match = path.match(/\/([^/]+)\.jsonl$/)
+      const normalizedPath = path.replace(/\\/g, '/')
+      const match = normalizedPath.match(/\/([^/]+)\.([^.]+)$/)
       if (match) {
         datasetName = match[1]
+        datasetType = datasetType || match[2]
       }
     }
 
@@ -93,6 +102,8 @@ export function parseYaml(content: string): TaskFormState {
     return {
       taskDescription: config.info || '',
       selectedDataset: datasetName || null,
+      selectedDatasetPath: datasetPath || null,
+      selectedDatasetType: datasetType || null,
       iteratorConfig,
       executors,
       currentStep: 0,

@@ -41,7 +41,7 @@ export default function ComparisonTable({
       const isBaseline = item.model === baselineItem.model
 
       // 安全计算差异，处理除零和空值情况
-      const safeDiff = (current: number, baseline: number, reverse = false): number | null => {
+      const safeDiff = (current: number, baseline: number): number | null => {
         if (baseline === 0 || current == null || baseline == null) return null
         return ((current - baseline) / baseline) * 100
       }

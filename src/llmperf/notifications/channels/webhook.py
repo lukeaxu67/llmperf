@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
@@ -182,7 +181,7 @@ class WebhookChannel(NotificationChannel):
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 # Use HEAD request for health check
-                response = await client.head(self.url)
+                await client.head(self.url)
                 # Consider any response as healthy (even 404 means endpoint exists)
                 return True
         except Exception:

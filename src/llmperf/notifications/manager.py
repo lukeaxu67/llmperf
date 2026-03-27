@@ -6,14 +6,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
 from .base import NotificationChannel, NotificationMessage, NotificationResult
 from .events import (
-    EventConfig,
     NotificationEventsConfig,
     NotificationEventType,
     ProgressConfig,

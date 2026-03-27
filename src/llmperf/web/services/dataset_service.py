@@ -5,10 +5,8 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -351,8 +349,6 @@ class DatasetService:
 
         # Get file paths
         data_path = self._get_data_path(name, file_type)
-        meta_path = self._get_meta_path(name)
-
         # Save data file
         data_path.write_bytes(content)
         file_size = len(content)

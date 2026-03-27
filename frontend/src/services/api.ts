@@ -375,9 +375,13 @@ export interface DetailedReport {
     cv: number
     by_executor?: Record<string, {
       values: number[]
-      p50: number
-      p95: number
-      p99: number
+      p50?: number
+      p90?: number
+      p95?: number
+      p99?: number
+      mean?: number
+      std?: number
+      cv?: number
     }>
   }
   token_analysis?: {
@@ -388,6 +392,8 @@ export interface DetailedReport {
     by_executor?: Record<string, {
       values: number[]
       avg: number
+      p50?: number
+      p90?: number
     }>
   }
   time_series?: {

@@ -212,8 +212,6 @@ def detect_periodicity(
     if len(timestamps) < 10:
         return {'period_minutes': period_minutes, 'pattern_strength': 0, 'note': 'Insufficient data'}
 
-    period_ms = period_minutes * 60 * 1000
-
     # Group by position within period
     position_groups: Dict[int, List[float]] = collections.defaultdict(list)
 

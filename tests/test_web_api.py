@@ -149,8 +149,10 @@ class TestDatasetEndpoints:
         response = client.get("/api/datasets")
 
         assert response.status_code == 200
-        datasets = response.json()
-        assert isinstance(datasets, list)
+        data = response.json()
+        assert "datasets" in data
+        assert "total" in data
+        assert isinstance(data["datasets"], list)
 
     def test_get_dataset_not_found(self, client):
         """Test getting non-existent dataset."""

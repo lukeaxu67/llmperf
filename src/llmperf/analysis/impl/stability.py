@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
-from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -16,24 +15,19 @@ from ..base_analysis import BaseAnalysis
 from ..record_query import RecordQuery
 from ..analysis_registry import register_analysis
 from ..statistics import (
-    percentile,
     mean,
-    std_dev,
-    outlier_count,
-    outlier_ratio,
     DistributionSummary,
 )
 from ..timeseries import (
+    TimeSegment,
     group_by_time_segment,
     compare_day_night,
     sliding_window_analysis,
     calculate_volatility_series,
     find_anomaly_windows,
-    get_hour_of_day,
 )
 
 from llmperf.records.model import RunRecord
-from llmperf.records.storage import Storage
 
 
 @register_analysis("stability")
@@ -174,7 +168,7 @@ class StabilityAnalysis(BaseAnalysis["StabilityAnalysis.Config"]):
 
         # 8. Output Length Distribution
         output_dist = DistributionSummary.from_values(
-            [float(l) for l in output_lengths],
+            [float(length) for length in output_lengths],
             self.config.outlier_threshold,
         )
 

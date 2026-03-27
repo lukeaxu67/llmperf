@@ -10,14 +10,13 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from llmperf.config.loader import load_config
-from llmperf.config.models import RunConfig
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
 from llmperf.runner import RunManager
+from .run_config_service import load_run_config_content, normalize_run_config
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +111,10 @@ class TaskService:
 
         # Load configuration
         if config_path:
-            config = load_config(config_path)
+            config = normalize_run_config(load_config(config_path))
+            normalized_config_content = None
         elif config_content:
-            import yaml
-            config_dict = yaml.safe_load(config_content)
-            config = RunConfig.model_validate(config_dict)
+            config, normalized_config_content = load_run_config_content(config_content)
         else:
             raise ValueError("Either config_path or config_content must be provided")
 
@@ -137,8 +135,8 @@ class TaskService:
         with self._lock:
             self._tasks[run_id] = task_info
             self._progress[run_id] = progress
-            if config_content:
-                self._config_contents[run_id] = config_content
+            if normalized_config_content:
+                self._config_contents[run_id] = normalized_config_content
 
         return task_info
 
@@ -165,29 +163,32 @@ class TaskService:
         # Get total records from dataset for progress tracking
         dataset_total = 0
         try:
-            import yaml
             if task_info.config_path:
-                config = load_config(task_info.config_path)
+                config = normalize_run_config(load_config(task_info.config_path))
             elif self._config_contents.get(run_id):
-                config_dict = yaml.safe_load(self._config_contents[run_id])
-                config = RunConfig.model_validate(config_dict)
+                config, _ = load_run_config_content(self._config_contents[run_id])
             else:
                 config = None
 
             if config and config.dataset:
-                from llmperf.datasets.dataset_source_registry import create_dataset_source
-                dataset_source = create_dataset_source(config.dataset.source)
+                from llmperf.datasets.dataset_source_registry import create_source
+
+                dataset_source = create_source(
+                    config.dataset.source.type,
+                    name=config.dataset.source.name or "dataset",
+                    config=dict(config.dataset.source.config or {}),
+                )
                 # Try to get total count
-                if hasattr(dataset_source, '__len__'):
+                if hasattr(dataset_source, "__len__"):
                     try:
                         dataset_total = len(dataset_source)
-                    except:
+                    except TypeError:
                         pass
                 if dataset_total == 0:
                     # Try loading to count
                     try:
                         dataset_total = len(list(dataset_source.load()))
-                    except:
+                    except Exception:
                         pass
 
                 # Account for max_rounds
@@ -202,23 +203,19 @@ class TaskService:
         # Create control events
         cancel_event = threading.Event()
         pause_event = threading.Event()
-        resume_event = threading.Event()
         self._cancel_events[run_id] = cancel_event
         self._pause_events[run_id] = pause_event
-        self._resume_events[run_id] = resume_event
+        self._resume_events[run_id] = threading.Event()
 
         try:
             # Load config
             temp_config_path = None
             if task_info.config_path:
-                config = load_config(task_info.config_path)
+                config = normalize_run_config(load_config(task_info.config_path))
                 config_path = task_info.config_path
             elif self._config_contents.get(run_id):
-                # Load from config content - create temp file
-                import yaml
                 import tempfile
-                config_dict = yaml.safe_load(self._config_contents[run_id])
-                config = RunConfig.model_validate(config_dict)
+                config, normalized_content = load_run_config_content(self._config_contents[run_id])
 
                 # Create temporary file for config
                 temp_file = tempfile.NamedTemporaryFile(
@@ -227,7 +224,7 @@ class TaskService:
                     delete=False,
                     encoding='utf-8'
                 )
-                temp_file.write(self._config_contents[run_id])
+                temp_file.write(normalized_content)
                 temp_file.close()
                 temp_config_path = temp_file.name
                 config_path = temp_config_path
@@ -316,7 +313,6 @@ class TaskService:
             return
 
         pause_event = self._pause_events.get(run_id)
-        resume_event = self._resume_events.get(run_id)
         last_completed_count = 0
         last_update_time = datetime.now()
 

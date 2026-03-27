@@ -45,7 +45,12 @@ class ResponsesProvider(BaseProvider):
     def _client(self, options: Dict[str, Any]) -> OpenAI:
         base_url = options.get("api_url") or os.environ.get(f"{self.provider_name.upper()}_BASE_URL")
         api_key = options.get("api_key") or os.environ.get(f"{self.provider_name.upper()}_API_KEY")
-        return OpenAI(api_key=api_key, base_url=base_url, timeout=options.get("timeout", 60))
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=options.get("timeout", 60),
+            default_headers=options.get("default_headers"),
+        )
 
     def invoke(self, request: ProviderRequest) -> RunRecord:
         client = self._client(request.options)
@@ -61,11 +66,13 @@ class ResponsesProvider(BaseProvider):
         final_ts = None
 
         extra_body = request.options.get("extra_body")
+        extra_headers = request.options.get("extra_headers") or request.options.get("extra_header")
         try:
             stream = client.responses.create(
                 model=request.model,
                 input=normalize_messages(request.messages),
                 stream=True,
+                extra_headers=extra_headers,
                 extra_body=extra_body,
                 timeout=request.options.get("timeout", 300),
             )

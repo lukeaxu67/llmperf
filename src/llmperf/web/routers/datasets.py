@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Body
 from pydantic import BaseModel, Field
@@ -11,7 +12,6 @@ from pydantic import BaseModel, Field
 from ..services.dataset_service import (
     DatasetService,
     DatasetMetadata,
-    DatasetType,
     get_dataset_service,
 )
 
@@ -267,7 +267,6 @@ async def list_formats():
 
 
 # Legacy endpoints for compatibility
-from pathlib import Path
 RESOURCE_DIR = Path(__file__).parent.parent.parent.parent.parent / "resource"
 
 
@@ -290,7 +289,6 @@ class LegacyDatasetInfo(BaseModel):
 )
 async def list_datasets_legacy():
     """List available datasets (legacy endpoint)."""
-    import json
 
     datasets = []
 

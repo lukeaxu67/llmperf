@@ -18,6 +18,9 @@ class ResponseExecutor(BaseExecutor):
     def process_row(self, run_id: str, row: DatasetRow, price: PriceCatalog | None = None) -> RunRecord:
         messages = self.build_messages(row)
         request_params = dict(self.config.param or {})
+        options = dict(request_params)
+        options["api_key"] = self.config.api_key
+        options["api_url"] = self.config.api_url
         request = ProviderRequest(
             run_id=run_id,
             executor_id=self.config.id,
@@ -25,7 +28,7 @@ class ResponseExecutor(BaseExecutor):
             provider=self.config.type,
             model=self.config.model or "",
             messages=messages,
-            options=dict(request_params),
+            options=options,
         )
         record = self.provider.invoke(request)
         record.request_params = dict(request_params)

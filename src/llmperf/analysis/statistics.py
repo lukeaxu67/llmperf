@@ -7,7 +7,7 @@ correlation, autocorrelation, and other statistical metrics.
 from __future__ import annotations
 
 import math
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 from dataclasses import dataclass
 
 
@@ -132,7 +132,6 @@ def correlation(x: List[float], y: List[float]) -> float:
     if len(x) != len(y) or len(x) < 2:
         return 0.0
 
-    n = len(x)
     mean_x = mean(x)
     mean_y = mean(y)
 

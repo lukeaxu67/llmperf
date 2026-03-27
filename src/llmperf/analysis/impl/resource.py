@@ -16,15 +16,12 @@ from ..record_query import RecordQuery
 from ..analysis_registry import register_analysis
 from ..statistics import (
     correlation,
-    autocorrelation,
     percentile,
     mean,
-    std_dev,
     AutocorrelationStats,
 )
 
 from llmperf.records.model import RunRecord
-from llmperf.records.storage import Storage
 
 
 @register_analysis("resource")
@@ -211,7 +208,6 @@ class ResourceAnalysis(BaseAnalysis["ResourceAnalysis.Config"]):
             return "Insufficient data"
 
         lag1 = autocorr.lag1
-        lag5 = autocorr.lag5
 
         if abs(lag1) > 0.5:
             if lag1 > 0:

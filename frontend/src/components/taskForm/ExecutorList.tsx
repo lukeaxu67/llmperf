@@ -94,15 +94,12 @@ export default function ExecutorList() {
     if (editingExecutor) {
       updateExecutor(editingExecutor.id, executor)
     } else {
-      addExecutor()
-      // Update the newly added executor
-      setTimeout(() => {
-        const store = useTaskFormStore.getState()
-        const newId = store.executors[store.executors.length - 1]?.id
-        if (newId) {
-          updateExecutor(newId, executor)
-        }
-      }, 0)
+      addExecutor(executor.type)
+      const store = useTaskFormStore.getState()
+      const newId = store.executors[store.executors.length - 1]?.id
+      if (newId) {
+        updateExecutor(newId, executor)
+      }
     }
   }
 

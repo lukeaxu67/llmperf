@@ -6,7 +6,6 @@ import io
 import json
 import csv
 import logging
-import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -15,10 +14,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..services.task_service import TaskService, TaskStatus, TaskInfo
-from ..services.pricing_service import PricingService, PriceInfo
+from ..services.pricing_service import PricingService
+from ..services.run_config_service import load_run_config_content
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
-from llmperf.records.model import RunRecord
 
 logger = logging.getLogger(__name__)
 
@@ -447,16 +446,12 @@ async def test_run(request: TestRunRequest = Body(...)):
     running a full benchmark task.
     """
     import time
-    import yaml
-    from llmperf.config.models import RunConfig
-    from llmperf.executors.base import create_executor
     from llmperf.providers.base import create_provider
-    from llmperf.datasets.dataset_source_registry import create_dataset_source
+    from llmperf.datasets.dataset_source_registry import create_source
 
     try:
         # Parse config
-        config_dict = yaml.safe_load(request.config_content)
-        config = RunConfig.model_validate(config_dict)
+        config, _ = load_run_config_content(request.config_content)
 
         if not config.executors:
             return TestRunResponse(
@@ -468,7 +463,11 @@ async def test_run(request: TestRunRequest = Body(...)):
         executor_config = config.executors[0]
 
         # Get first record from dataset
-        dataset_source = create_dataset_source(config.dataset.source)
+        dataset_source = create_source(
+            config.dataset.source.type,
+            name=config.dataset.source.name or "dataset",
+            config=dict(config.dataset.source.config or {}),
+        )
         records = list(dataset_source.load())
         if not records:
             return TestRunResponse(
@@ -511,16 +510,14 @@ async def test_run(request: TestRunRequest = Body(...)):
 
         # Calculate metrics
         first_token_ms = record.first_resp_time or 0
-        tokens_per_second = 0
-        if record.duration and record.duration > 0 and record.atokens:
-            tokens_per_second = (record.atokens / record.duration) * 1000
+        tokens_per_second = record.token_per_second if record.atokens else 0
 
         return TestRunResponse(
             success=record.status == 200,
             duration_ms=duration_ms,
             first_token_ms=first_token_ms,
             tokens_per_second=tokens_per_second,
-            response=record.response or "",
+            response="".join(record.content),
             error="" if record.status == 200 else f"Request failed with status {record.status}",
         )
 

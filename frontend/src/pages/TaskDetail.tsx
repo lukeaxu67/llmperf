@@ -762,7 +762,7 @@ export default function TaskDetail() {
                                 <Col span={12}>
                                   <Statistic
                                     title="P90"
-                                    value={data.p90}
+                                    value={data.p90 ?? 0}
                                     precision={0}
                                   />
                                 </Col>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from pydantic import BaseModel, Field
 

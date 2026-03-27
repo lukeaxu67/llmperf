@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import time
 
 from ..records.model import RunRecord, now_ms
 from ..utils.counter import get_word_num

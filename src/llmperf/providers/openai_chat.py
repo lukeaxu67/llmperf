@@ -50,7 +50,13 @@ class OpenAIChatProvider(BaseProvider):
         base_url = options.get("api_url") or os.environ.get(f"{prefix}_BASE_URL")
         api_key = options.get("api_key") or os.environ.get(f"{prefix}_API_KEY")
         timeout = options.get("timeout", 60)
-        return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        default_headers = options.get("default_headers")
+        return OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            default_headers=default_headers,
+        )
 
     def handle_special_chunk(self, chunk, record: RunRecord) -> bool:
         code = getattr(chunk, "code", 0)
@@ -91,6 +97,7 @@ class OpenAIChatProvider(BaseProvider):
         client = self.build_client(request.options)
         messages_payload = _message_payload(request.messages, request.options.get("messages_mode", "standard"))
         extra_body = request.options.get("extra_body")
+        extra_headers = request.options.get("extra_headers") or request.options.get("extra_header")
         stream_options = request.options.get("stream_options", {"include_usage": True})
         record = RunRecord(
             run_id=request.run_id,
@@ -108,6 +115,7 @@ class OpenAIChatProvider(BaseProvider):
                 messages=messages_payload,
                 stream=True,
                 stream_options=stream_options,
+                extra_headers=extra_headers,
                 extra_body=extra_body,
                 timeout=request.options.get("timeout", 300),
             )

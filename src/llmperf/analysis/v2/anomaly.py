@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field

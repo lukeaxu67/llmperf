@@ -8,18 +8,17 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
 from ..base_analysis import BaseAnalysis
 from ..record_query import RecordQuery
 from ..analysis_registry import register_analysis
-from ..statistics import percentile, mean, std_dev, variance
-from ..timeseries import detect_periodicity, sliding_window_analysis
+from ..statistics import mean, std_dev, variance
+from ..timeseries import detect_periodicity
 
 from llmperf.records.model import RunRecord
-from llmperf.records.storage import Storage
 
 
 @register_analysis("ratelimit")
@@ -81,7 +80,6 @@ class RatelimitAnalysis(BaseAnalysis["RatelimitAnalysis.Config"]):
         # Extract metrics
         timestamps = [r.created_at for r in records]
         ttft_values = [float(r.first_resp_time) for r in records if r.first_resp_time > 0]
-        status_codes = [r.status for r in records]
 
         # 1. Minute-level pattern analysis
         minute_patterns = self._analyze_minute_patterns(timestamps, ttft_values)

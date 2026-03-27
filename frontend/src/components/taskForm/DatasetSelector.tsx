@@ -59,6 +59,16 @@ export default function DatasetSelector() {
     }
   }
 
+  const handleSelectDataset = (name: string | null) => {
+    if (!name) {
+      setSelectedDataset(null, null, null)
+      return
+    }
+
+    const dataset = datasets.find((item) => item.name === name)
+    setSelectedDataset(name, dataset?.file_path || null, dataset?.file_type || null)
+  }
+
   return (
     <div>
       <Card title="任务描述" style={{ marginBottom: 16 }}>
@@ -88,7 +98,7 @@ export default function DatasetSelector() {
         ) : (
           <Radio.Group
             value={selectedDataset}
-            onChange={(e) => setSelectedDataset(e.target.value)}
+            onChange={(e) => handleSelectDataset(e.target.value)}
             style={{ width: '100%' }}
           >
             <List
@@ -96,7 +106,7 @@ export default function DatasetSelector() {
               renderItem={(dataset) => (
                 <List.Item
                   style={{ cursor: 'pointer' }}
-                  onClick={() => setSelectedDataset(dataset.name)}
+                  onClick={() => handleSelectDataset(dataset.name)}
                 >
                   <List.Item.Meta
                     avatar={

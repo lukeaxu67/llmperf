@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +24,6 @@ from ..statistics import percentile, mean
 from ..timeseries import get_hour_of_day, BEIJING_TZ
 
 from llmperf.records.model import RunRecord
-from llmperf.records.storage import Storage
 
 
 @register_analysis("monitoring_report")
