@@ -1,0 +1,15 @@
+{
+  "name": "test_3",
+  "description": "Second",
+  "file_path": "test_3.jsonl",
+  "file_type": "jsonl",
+  "row_count": 1,
+  "columns": [
+    "id",
+    "messages"
+  ],
+  "created_at": 1771938335,
+  "updated_at": 1771938335,
+  "file_size": 64,
+  "encoding": "utf-8"
+}
