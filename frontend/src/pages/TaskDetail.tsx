@@ -25,6 +25,7 @@ import {
   PauseCircleOutlined,
   PlayCircleOutlined,
   StopOutlined,
+  SyncOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import StatusTag from '@/components/StatusTag'
@@ -196,6 +197,17 @@ export default function TaskDetail() {
     }
   }
 
+  const handleRecover = async () => {
+    if (!id) return
+    try {
+      await taskApi.recover(id)
+      message.success('任务已恢复执行，将继续补齐未完成部分')
+      loadTaskBundle(id, true)
+    } catch (error: any) {
+      message.error(error.message || '恢复执行失败')
+    }
+  }
+
   const executorItems = useMemo<ExecutorProgress[]>(
     () => report?.executor_summary || progress?.executors || [],
     [progress, report],
@@ -256,6 +268,9 @@ export default function TaskDetail() {
             <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleResume}>恢复</Button>
             <Button danger icon={<StopOutlined />} onClick={handleStop}>停止</Button>
           </>
+        )}
+        {(task.status === 'failed' || task.status === 'cancelled') && (
+          <Button type="primary" icon={<SyncOutlined />} onClick={handleRecover}>恢复执行</Button>
         )}
       </Space>
 

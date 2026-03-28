@@ -243,6 +243,9 @@ export const taskApi = {
   start: (runId: string) =>
     api.post(`/tasks/${runId}/start`),
 
+  recover: (runId: string) =>
+    api.post(`/tasks/${runId}/recover`),
+
   pause: (runId: string) =>
     api.post(`/tasks/${runId}/pause`),
 

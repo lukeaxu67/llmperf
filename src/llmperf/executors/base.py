@@ -76,6 +76,10 @@ class BaseExecutor:
             total_rows = None
         if total_rows is None and max_rows is not None:
             total_rows = int(max_rows)
+
+        completed_row_ids = storage.get_completed_dataset_row_ids(run_id, self.config.id)
+        if total_rows is not None:
+            total_rows = max(total_rows - len(completed_row_ids), 0)
         if total_rows is not None:
             logger.info("Executor %s starting with %d rows", self.config.id, total_rows)
         else:
@@ -105,10 +109,16 @@ class BaseExecutor:
                 nonlocal dispatched, row_index
                 if not _can_dispatch_more():
                     return False
-                try:
-                    row = next(iterator)
-                except StopIteration:
-                    return False
+                row = None
+                while True:
+                    try:
+                        candidate = next(iterator)
+                    except StopIteration:
+                        return False
+                    if candidate.id in completed_row_ids:
+                        continue
+                    row = candidate
+                    break
                 limiter.acquire()
                 if not _can_dispatch_more():
                     return False

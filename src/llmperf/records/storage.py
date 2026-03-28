@@ -158,6 +158,32 @@ class Storage:
                     created_at=row.created_at,
                 )
 
+    def get_completed_dataset_row_ids(self, run_id: str, executor_id: str) -> set[str]:
+        with self.db.session() as session:
+            rows = (
+                session.query(ExecutionORM.dataset_row_id)
+                .filter(ExecutionORM.run_id == run_id)
+                .filter(ExecutionORM.executor_id == executor_id)
+                .distinct()
+                .all()
+            )
+            return {str(row[0]) for row in rows if row and row[0]}
+
+    def get_executor_completion_counts(self, run_id: str) -> dict[str, int]:
+        with self.db.session() as session:
+            from sqlalchemy import func
+
+            rows = (
+                session.query(
+                    ExecutionORM.executor_id,
+                    func.count(func.distinct(ExecutionORM.dataset_row_id)),
+                )
+                .filter(ExecutionORM.run_id == run_id)
+                .group_by(ExecutionORM.executor_id)
+                .all()
+            )
+            return {str(executor_id): int(count or 0) for executor_id, count in rows if executor_id}
+
     def query_records(
         self,
         provider: Optional[str] = None,

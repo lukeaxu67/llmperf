@@ -98,9 +98,22 @@ class ProcessManager:
 
         pricing_data = [entry.model_dump() for entry in self.config.pricing]
         base_rows = list(self.rows)
+        expected_total_rows = self.max_rows
+        if expected_total_rows is None:
+            expected_total_rows = len(base_rows) * int(self.max_rounds or 1)
+        else:
+            expected_total_rows = int(expected_total_rows)
+        storage = Storage(self.db_path)
+        completion_counts = storage.get_executor_completion_counts(self.run_id)
 
-        pending: Dict[str, ExecutorConfig] = {cfg.id: cfg for cfg in self.config.executors}
-        completed: set[str] = set()
+        completed: set[str] = {
+            executor_id
+            for executor_id, count in completion_counts.items()
+            if expected_total_rows > 0 and count >= expected_total_rows
+        }
+        pending: Dict[str, ExecutorConfig] = {
+            cfg.id: cfg for cfg in self.config.executors if cfg.id not in completed
+        }
 
         max_workers = mp_cfg.max_workers or max(1, mp.cpu_count())
         logger.info(

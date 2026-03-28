@@ -462,6 +462,36 @@ async def start_task(
 
 
 @router.post(
+    "/{run_id}/recover",
+    response_model=TaskResponse,
+    summary="Recover a failed or cancelled task and continue remaining work",
+)
+async def recover_task(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+):
+    service = get_service()
+    success = service.recover_task(run_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be recovered (not found, no config, or status is not failed/cancelled)",
+        )
+
+    background_tasks.add_task(service.run_task, run_id)
+    task_info = service.get_task(run_id)
+
+    return TaskResponse(
+        run_id=run_id,
+        status=task_info.status if task_info else TaskStatus.PENDING,
+        message="Task recovery started",
+        created_at=task_info.created_at if task_info else None,
+        scheduled_at=task_info.scheduled_at if task_info else None,
+    )
+
+
+@router.post(
     "/{run_id}/cancel",
     response_model=TaskResponse,
     summary="Cancel a task",

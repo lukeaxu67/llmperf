@@ -145,6 +145,15 @@ class TaskService:
         return self._storage.get_run(run_id)
 
     @staticmethod
+    def _dispatch_async(coro: Any) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
+        loop.create_task(coro)
+
+    @staticmethod
     def _task_status_from_value(value: Any) -> TaskStatus:
         try:
             return TaskStatus(str(value))
@@ -728,6 +737,45 @@ class TaskService:
         )
         return True
 
+    def recover_task(self, run_id: str) -> bool:
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                return False
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+            self._progress.setdefault(run_id, TaskProgress(run_id=run_id, status=task_info.status))
+
+        if task_info.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            return False
+
+        if not self.get_task_config_content(run_id) and not task_info.config_path:
+            return False
+
+        scheduled_timer = self._scheduled_timers.pop(run_id, None)
+        if scheduled_timer:
+            scheduled_timer.cancel()
+
+        task_info.status = TaskStatus.PENDING
+        task_info.completed_at = None
+        task_info.error_message = None
+        task_info.scheduled_at = None
+
+        progress = self._progress.get(run_id)
+        if progress:
+            progress.status = TaskStatus.PENDING
+            progress.paused_at = None
+
+        self._storage.update_run_status(
+            run_id,
+            status=TaskStatus.PENDING.value,
+            completed_at=0,
+            scheduled_at=0,
+            error_message="",
+        )
+        return True
+
     def run_task(self, run_id: str) -> None:
         """Run a task in the background.
 
@@ -913,7 +961,7 @@ class TaskService:
                 except Exception:
                     pass
 
-            asyncio.run(self._broadcast_status(run_id))
+            self._dispatch_async(self._broadcast_status(run_id))
 
     def _monitor_progress(
         self,
@@ -946,8 +994,8 @@ class TaskService:
                     progress.paused_at = datetime.now()
 
                     # Broadcast status change
-                    asyncio.run(self._broadcast_status(run_id))
-                    asyncio.run(self._broadcast_progress(run_id))
+                    self._dispatch_async(self._broadcast_status(run_id))
+                    self._dispatch_async(self._broadcast_progress(run_id))
 
                     # Wait for resume or cancel
                     while pause_event.is_set() and not cancel_event.is_set():
@@ -969,7 +1017,7 @@ class TaskService:
                         progress.paused_at = None
 
                     # Broadcast resume
-                    asyncio.run(self._broadcast_status(run_id))
+                    self._dispatch_async(self._broadcast_status(run_id))
 
                 # Check if task has completed/failed/cancelled - exit loop if so
                 task_info = self._tasks.get(run_id)
@@ -991,7 +1039,7 @@ class TaskService:
                     last_completed_count = progress.completed
 
                     # Broadcast progress update
-                    asyncio.run(self._broadcast_progress(run_id))
+                    self._dispatch_async(self._broadcast_progress(run_id))
 
                 time.sleep(2)  # Poll every 2 seconds
 
@@ -1212,7 +1260,7 @@ class TaskService:
         )
 
         # Broadcast status change
-        asyncio.run(self._broadcast_status(run_id))
+        self._dispatch_async(self._broadcast_status(run_id))
 
         return True
 
@@ -1247,7 +1295,7 @@ class TaskService:
         self._storage.update_run_status(run_id, status=TaskStatus.PAUSED.value)
 
         # Broadcast that pause was requested
-        asyncio.run(self._broadcast_status(run_id))
+        self._dispatch_async(self._broadcast_status(run_id))
 
         return True
 
@@ -1282,7 +1330,7 @@ class TaskService:
         self._storage.update_run_status(run_id, status=TaskStatus.RUNNING.value)
 
         # Broadcast that resume was requested
-        asyncio.run(self._broadcast_status(run_id))
+        self._dispatch_async(self._broadcast_status(run_id))
 
         return True
 

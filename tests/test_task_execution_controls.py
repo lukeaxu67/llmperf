@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from llmperf.config.models import ExecutorConfig
 from llmperf.datasets.types import Message, TestCase
+from llmperf.executors.base import BaseExecutor
 from llmperf.executors.openai_chat import OpenAIChatExecutor
 from llmperf.executors.process_manager import ProcessManager, TaskCancelledError
 from llmperf.records.model import RunRecord
@@ -151,6 +152,95 @@ def test_start_endpoint_starts_scheduled_task_immediately(tmp_path, monkeypatch)
         task_response = client.get(f"/api/tasks/{run_id}")
         assert task_response.status_code == 200
         assert task_response.json()["status"] == "pending"
+
+
+def test_recover_endpoint_reuses_same_run_id(tmp_path, monkeypatch):
+    db_path = tmp_path / "recover.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": LEGACY_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        cancel_response = client.post(f"/api/tasks/{run_id}/cancel")
+        assert cancel_response.status_code == 200
+
+        service = web_main.get_task_service()
+        calls: list[str] = []
+
+        def fake_run_task(target_run_id: str) -> None:
+            calls.append(target_run_id)
+
+        monkeypatch.setattr(service, "run_task", fake_run_task)
+
+        recover_response = client.post(f"/api/tasks/{run_id}/recover")
+        assert recover_response.status_code == 200
+        assert recover_response.json()["run_id"] == run_id
+        assert recover_response.json()["message"] == "Task recovery started"
+        assert calls == [run_id]
+
+
+def test_executor_resume_skips_completed_dataset_rows(tmp_path):
+    db_path = tmp_path / "resume-skip.sqlite"
+    storage = Storage(str(db_path))
+
+    class DummyExecutor(BaseExecutor):
+        def __init__(self, config):
+            super().__init__(config)
+            self.processed_ids: list[str] = []
+
+        def process_row(self, run_id, row, price=None):
+            self.processed_ids.append(row.id)
+            return RunRecord(
+                run_id=run_id,
+                executor_id=self.config.id,
+                dataset_row_id=row.id,
+                provider="mock",
+                model="mock-model",
+                status=200,
+                qtokens=10,
+                atokens=10,
+                action_times=[1, 2, 3],
+                content=["ok"],
+            )
+
+    executor = DummyExecutor(
+        ExecutorConfig(
+            id="exec-1",
+            name="Executor 1",
+            type="mock",
+            impl="chat",
+            model="mock-model",
+            param={},
+        )
+    )
+
+    storage.insert_record(
+        RunRecord(
+            run_id="run-1",
+            executor_id="exec-1",
+            dataset_row_id="row-1",
+            provider="mock",
+            model="mock-model",
+            status=200,
+        )
+    )
+
+    rows = [
+        TestCase(id="row-1", messages=[Message(role="user", content="a")]),
+        TestCase(id="row-2", messages=[Message(role="user", content="b")]),
+    ]
+    executor.run("run-1", rows, storage)
+
+    assert executor.processed_ids == ["row-2"]
 
 
 def test_openai_chat_executor_uses_runtime_pricing_when_catalog_missing(tmp_path, monkeypatch):

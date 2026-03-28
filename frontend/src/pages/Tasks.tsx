@@ -24,6 +24,7 @@ import {
   StopOutlined,
   RedoOutlined,
   PlayCircleOutlined,
+  SyncOutlined,
   FileTextOutlined,
   DollarOutlined,
   CopyOutlined,
@@ -139,6 +140,16 @@ export default function Tasks() {
       fetchTasks()
     } catch (error: any) {
       message.error(error.message || '立即启动失败')
+    }
+  }
+
+  const handleRecover = async (runId: string) => {
+    try {
+      await taskApi.recover(runId)
+      message.success('任务已恢复执行，将继续补齐未完成部分')
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.message || '恢复执行失败')
     }
   }
 
@@ -286,8 +297,18 @@ export default function Tasks() {
               />
             </Tooltip>
           )}
+          {(record.status === 'failed' || record.status === 'cancelled') && (
+            <Tooltip title="恢复执行（续跑未完成部分）">
+              <Button
+                type="text"
+                size="small"
+                icon={<SyncOutlined />}
+                onClick={() => handleRecover(record.run_id)}
+              />
+            </Tooltip>
+          )}
           {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
-            <Tooltip title="立即重跑">
+            <Tooltip title="立即重跑（创建新任务）">
               <Button
                 type="text"
                 size="small"
