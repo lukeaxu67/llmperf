@@ -26,6 +26,53 @@ _INTERNAL_OPTION_KEYS = {
 }
 
 
+def _safe_json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool, list, dict)):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump()
+        except Exception:
+            pass
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return to_dict()
+        except Exception:
+            pass
+    return str(value)
+
+
+def _serialize_exception(exc: Exception) -> str:
+    payload: Dict[str, Any] = {
+        "error_type": type(exc).__name__,
+        "desc": getattr(exc, "message", None) or str(exc),
+    }
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        payload["status_code"] = status_code
+    request_id = getattr(exc, "request_id", None)
+    if request_id:
+        payload["request_id"] = request_id
+    body = _safe_json_value(getattr(exc, "body", None))
+    if body not in (None, "", {}):
+        payload["body"] = body
+    response = getattr(exc, "response", None)
+    if response is not None:
+        response_body = _safe_json_value(getattr(response, "json", None))
+        if callable(getattr(response, "json", None)):
+            try:
+                response_body = response.json()
+            except Exception:
+                response_body = None
+        if response_body not in (None, "", {}):
+            payload["response"] = response_body
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _event_to_dict(event: Any) -> Dict[str, Any]:
     try:
         if hasattr(event, "model_dump") and callable(event.model_dump):
@@ -165,7 +212,7 @@ class ResponsesProvider(BaseProvider):
             else:
                 logger.error("[%s-response] provider exception: %s", self.provider_name, exc)
             record.status = getattr(exc, "status_code", -1) if isinstance(exc, APIStatusError) else -1
-            record.info = json.dumps({"desc": str(exc)})
+            record.info = _serialize_exception(exc)
             stream_failed = True
             final_ts = final_ts or now_ms()
         finally:

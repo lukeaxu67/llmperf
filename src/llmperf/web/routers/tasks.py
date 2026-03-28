@@ -129,6 +129,56 @@ class TestRunResponse(BaseModel):
     results: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+def _parse_record_info(info: str) -> Dict[str, Any]:
+    if not info:
+        return {}
+    try:
+        parsed = json.loads(info)
+        return parsed if isinstance(parsed, dict) else {"desc": str(parsed)}
+    except Exception:
+        return {"desc": info}
+
+
+def _format_test_run_error(status: int, info: str) -> Dict[str, Any]:
+    parsed = _parse_record_info(info)
+    detail_parts: List[str] = []
+
+    status_code = parsed.get("status_code")
+    if not isinstance(status_code, int) and isinstance(status, int) and status not in (0, 200):
+        status_code = status
+    if isinstance(status_code, int):
+        detail_parts.append(f"状态码: {status_code}")
+
+    error_type = parsed.get("error_type")
+    if error_type:
+        detail_parts.append(f"错误类型: {error_type}")
+
+    desc = parsed.get("desc")
+    if desc:
+        detail_parts.append(f"错误信息: {desc}")
+
+    sid = parsed.get("sid")
+    if sid:
+        detail_parts.append(f"会话ID: {sid}")
+
+    request_id = parsed.get("request_id")
+    if request_id:
+        detail_parts.append(f"请求ID: {request_id}")
+
+    body = parsed.get("body") or parsed.get("response")
+    if body not in (None, "", {}):
+        body_text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+        detail_parts.append(f"响应体: {body_text[:1200]}")
+
+    message = "\n".join(detail_parts) if detail_parts else f"Request failed with status {status}"
+    return {
+        "status_code": status_code if isinstance(status_code, int) else status,
+        "error_type": error_type or "",
+        "error_detail": parsed,
+        "error_message": message,
+    }
+
+
 def get_service() -> TaskService:
     """Get task service instance."""
     from ..main import get_task_service
@@ -549,19 +599,26 @@ async def test_run(request: TestRunRequest = Body(...)):
             start_time = time.time()
             try:
                 record = provider.invoke(test_request)
-                error_message = "" if record.status == 200 else f"Request failed with status {record.status}"
                 success = record.status == 200
                 response_text = "".join(record.content)
                 first_token_ms = record.first_resp_time or 0
                 tokens_per_second = record.token_per_second if record.atokens else 0
+                error_payload = (
+                    {"status_code": 200, "error_type": "", "error_detail": {}, "error_message": ""}
+                    if success
+                    else _format_test_run_error(record.status, record.info)
+                )
             except Exception as executor_exc:
                 logger.exception("Test run failed for executor %s: %s", executor_config.id, executor_exc)
                 record = None
                 success = False
-                error_message = str(executor_exc)
                 response_text = ""
                 first_token_ms = 0
                 tokens_per_second = 0
+                error_payload = _format_test_run_error(-1, json.dumps({
+                    "error_type": type(executor_exc).__name__,
+                    "desc": str(executor_exc),
+                }, ensure_ascii=False))
             duration_ms = (time.time() - start_time) * 1000
             overall_success = overall_success and success
 
@@ -576,7 +633,10 @@ async def test_run(request: TestRunRequest = Body(...)):
                     "first_token_ms": first_token_ms,
                     "tokens_per_second": tokens_per_second,
                     "response": response_text,
-                    "error": error_message,
+                    "status_code": error_payload["status_code"],
+                    "error_type": error_payload["error_type"],
+                    "error_detail": error_payload["error_detail"],
+                    "error": error_payload["error_message"],
                 }
             )
 

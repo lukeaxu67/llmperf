@@ -11,6 +11,7 @@ import {
   Card,
   Tag,
   Progress,
+  Divider,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -162,6 +163,18 @@ export default function TestRunModal({
               children: (
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
                   <Descriptions bordered size="small" column={2}>
+                    <Descriptions.Item label="状态码">
+                      <Tag color={item.success ? 'success' : 'error'}>
+                        {typeof item.status_code === 'number' ? item.status_code : (item.success ? 200 : '-1')}
+                      </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="错误类型">
+                      {item.success ? (
+                        <Text type="secondary">-</Text>
+                      ) : (
+                        <Text code>{item.error_type || 'UnknownError'}</Text>
+                      )}
+                    </Descriptions.Item>
                     <Descriptions.Item
                       label={(
                         <Space>
@@ -229,12 +242,29 @@ export default function TestRunModal({
                         {item.response || '(无内容)'}
                       </Paragraph>
                     ) : (
-                      <Alert
-                        message="执行失败"
-                        description={item.error || 'Unknown error'}
-                        type="error"
-                        showIcon
-                      />
+                      <div>
+                        <Alert
+                          message="执行失败"
+                          description="已返回详细错误信息，可直接据此排查鉴权、地址、模型名或请求参数问题。"
+                          type="error"
+                          showIcon
+                        />
+                        <Divider style={{ margin: '12px 0' }} />
+                        <Paragraph
+                          style={{
+                            marginBottom: 0,
+                            padding: 12,
+                            background: '#fff2f0',
+                            border: '1px solid #ffccc7',
+                            borderRadius: 4,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            fontFamily: 'Consolas, Monaco, monospace',
+                          }}
+                        >
+                          {item.error || 'Unknown error'}
+                        </Paragraph>
+                      </div>
                     )}
                   </Card>
                 </Space>

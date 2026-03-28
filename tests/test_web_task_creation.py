@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from llmperf.providers.base import ProviderRequest
 from llmperf.providers.openai_chat import OpenAIChatProvider
+from llmperf.records.model import RunRecord
 from llmperf.web.main import create_app, get_task_service
 
 
@@ -97,3 +98,37 @@ def test_openai_chat_provider_forwards_extra_headers(monkeypatch):
     assert captured["extra_headers"] == {"x-foo": "bar"}
     assert captured["extra_body"] == {"reasoning": {"effort": "low"}}
     assert record.status == 200
+
+
+def test_test_run_returns_actionable_error_details(monkeypatch):
+    from llmperf.providers import base as provider_base
+
+    class FakeProvider:
+        def invoke(self, request):
+            return RunRecord(
+                run_id=request.run_id,
+                executor_id=request.executor_id,
+                dataset_row_id=request.dataset_row_id,
+                provider=request.provider,
+                model=request.model,
+                status=401,
+                info='{"error_type":"AuthenticationError","desc":"Invalid API key","request_id":"req_123"}',
+            )
+
+    monkeypatch.setattr(provider_base, "create_provider", lambda *args, **kwargs: FakeProvider())
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/tasks/test-run",
+            json={"config_content": LEGACY_WEB_CONFIG},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is False
+    assert len(body["results"]) == 1
+    assert body["results"][0]["status_code"] == 401
+    assert body["results"][0]["error_type"] == "AuthenticationError"
+    assert "状态码: 401" in body["results"][0]["error"]
+    assert "错误信息: Invalid API key" in body["results"][0]["error"]
+    assert "请求ID: req_123" in body["results"][0]["error"]

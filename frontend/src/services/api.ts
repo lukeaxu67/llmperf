@@ -374,6 +374,9 @@ export interface TestRunResponse {
     duration_ms: number
     first_token_ms: number
     tokens_per_second: number
+    status_code?: number
+    error_type?: string
+    error_detail?: Record<string, any>
     response: string
     error: string
   }>
