@@ -29,6 +29,7 @@ class DatasetListResponse(BaseModel):
 
 class DatasetDetailResponse(BaseModel):
     """Response for dataset details."""
+    id: str
     name: str
     description: str
     file_path: str
@@ -43,7 +44,9 @@ class DatasetDetailResponse(BaseModel):
 
 class DatasetPreviewResponse(BaseModel):
     """Response for dataset preview."""
+    id: str
     name: str
+    file_path: str
     total_rows: int
     preview_rows: int
     columns: List[str]
@@ -52,6 +55,7 @@ class DatasetPreviewResponse(BaseModel):
 
 class DatasetUploadResponse(BaseModel):
     """Response for dataset upload."""
+    id: str
     name: str
     description: str
     file_type: str
@@ -74,6 +78,7 @@ def get_service() -> DatasetService:
 def _metadata_to_dict(metadata: DatasetMetadata) -> Dict[str, Any]:
     """Convert metadata to dictionary."""
     return {
+        "id": metadata.id,
         "name": metadata.name,
         "description": metadata.description,
         "file_path": metadata.file_path,
@@ -178,6 +183,7 @@ async def upload_dataset(
         raise HTTPException(status_code=500, detail=f"Failed to upload dataset: {e}")
 
     return DatasetUploadResponse(
+        id=metadata.id,
         name=metadata.name,
         description=metadata.description,
         file_type=metadata.file_type.value,

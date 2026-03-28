@@ -148,6 +148,7 @@ export interface TaskStats {
 }
 
 export interface Dataset {
+  id: string
   name: string
   description?: string
   file_type: string
@@ -301,11 +302,11 @@ export const datasetApi = {
   list: () =>
     api.get<{ datasets: Dataset[]; total: number }>('/datasets'),
 
-  get: (name: string) =>
-    api.get<Dataset>(`/datasets/${name}`),
+  get: (datasetId: string) =>
+    api.get<Dataset>(`/datasets/${datasetId}`),
 
-  preview: (name: string, limit: number = 10) =>
-    api.get(`/datasets/${name}/preview`, { params: { limit } }),
+  preview: (datasetId: string, limit: number = 10) =>
+    api.get(`/datasets/${datasetId}/preview`, { params: { limit } }),
 
   validate: (file: File) => {
     const formData = new FormData()
@@ -329,8 +330,8 @@ export const datasetApi = {
     })
   },
 
-  delete: (name: string) =>
-    api.delete(`/datasets/${name}`),
+  delete: (datasetId: string) =>
+    api.delete(`/datasets/${datasetId}`),
 }
 
 export const configApi = {

@@ -52,7 +52,7 @@ def normalize_run_config(config: RunConfig) -> RunConfig:
         return config
 
     dataset_source.type = metadata.file_type.value
-    source_config["path"] = str(dataset_service._get_data_path(metadata.name, metadata.file_type))
+    source_config["path"] = str(dataset_service._resolve_data_path(metadata))
     if metadata.encoding and "encoding" not in source_config:
         source_config["encoding"] = metadata.encoding
     dataset_source.config = source_config

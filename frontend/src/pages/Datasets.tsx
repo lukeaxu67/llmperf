@@ -55,11 +55,11 @@ export default function Datasets() {
     }
   }
 
-  const handlePreview = async (name: string) => {
+  const handlePreview = async (datasetId: string) => {
     setPreviewLoading(true)
     setPreviewVisible(true)
     try {
-      const response = await datasetApi.preview(name, 20) as any
+      const response = await datasetApi.preview(datasetId, 20) as any
       setPreviewData(response)
     } catch (error: any) {
       message.error(error.message || '获取数据集预览失败')
@@ -68,9 +68,9 @@ export default function Datasets() {
     }
   }
 
-  const handleDelete = async (name: string) => {
+  const handleDelete = async (datasetId: string) => {
     try {
-      await datasetApi.delete(name)
+      await datasetApi.delete(datasetId)
       message.success('数据集已删除')
       fetchDatasets()
     } catch (error: any) {
@@ -142,6 +142,12 @@ export default function Datasets() {
       render: (description: string) => description || '-',
     },
     {
+      title: '文件路径',
+      dataIndex: 'file_path',
+      key: 'file_path',
+      render: (filePath: string) => <Text code>{filePath || '-'}</Text>,
+    },
+    {
       title: '记录数',
       dataIndex: 'record_count',
       key: 'record_count',
@@ -181,13 +187,13 @@ export default function Datasets() {
             type="text"
             size="small"
             icon={<EyeOutlined />}
-            onClick={() => handlePreview(record.name)}
+            onClick={() => handlePreview(record.id)}
           >
             预览
           </Button>
           <Popconfirm
             title="确定要删除此数据集吗？"
-            onConfirm={() => handleDelete(record.name)}
+            onConfirm={() => handleDelete(record.id)}
           >
             <Button type="text" size="small" danger icon={<DeleteOutlined />}>
               删除
@@ -228,7 +234,7 @@ export default function Datasets() {
         <Table
           columns={columns}
           dataSource={datasets}
-          rowKey="name"
+          rowKey="id"
           loading={loading}
           pagination={{ pageSize: 10 }}
           locale={{
@@ -262,7 +268,9 @@ export default function Datasets() {
         ) : previewData ? (
           <div>
             <Descriptions size="small" column={3} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="标识">{previewData.id}</Descriptions.Item>
               <Descriptions.Item label="名称">{previewData.name}</Descriptions.Item>
+              <Descriptions.Item label="文件路径">{previewData.file_path}</Descriptions.Item>
               <Descriptions.Item label="总记录数">{previewData.total_rows}</Descriptions.Item>
               <Descriptions.Item label="预览数量">{previewData.preview_rows}</Descriptions.Item>
             </Descriptions>

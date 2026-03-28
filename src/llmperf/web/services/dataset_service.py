@@ -24,6 +24,7 @@ class DatasetType(str, Enum):
 class DatasetMetadata:
     """Metadata for a dataset."""
     name: str
+    id: str = ""
     description: str = ""
     file_path: str = ""
     file_type: DatasetType = DatasetType.JSONL
@@ -50,11 +51,12 @@ class DatasetMetadata:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DatasetMetadata":
+    def from_dict(cls, data: Dict[str, Any], dataset_id: str = "") -> "DatasetMetadata":
         """Create from dictionary."""
         file_type = DatasetType(data.get("file_type", "jsonl"))
         return cls(
-            name=data["name"],
+            id=dataset_id,
+            name=data.get("name") or dataset_id,
             description=data.get("description", ""),
             file_path=data.get("file_path", ""),
             file_type=file_type,
@@ -87,6 +89,9 @@ class DatasetService:
             # Default to project root / data / datasets
             project_root = Path(__file__).parent.parent.parent.parent.parent
             datasets_dir = project_root / "data" / "datasets"
+            self._project_root = project_root
+        else:
+            self._project_root = Path(datasets_dir).resolve().parent.parent
 
         self._datasets_dir = Path(datasets_dir)
         self._datasets_dir.mkdir(parents=True, exist_ok=True)
@@ -97,28 +102,47 @@ class DatasetService:
 
         logger.info(f"Dataset service initialized with directory: {self._datasets_dir}")
 
-    def _get_meta_path(self, name: str) -> Path:
+    def _get_meta_path(self, dataset_id: str) -> Path:
         """Get metadata file path for a dataset.
 
         Args:
-            name: Dataset name.
+            dataset_id: Stable dataset identifier.
 
         Returns:
             Path to metadata file.
         """
-        return self._datasets_dir / f"{name}.meta.json"
+        return self._datasets_dir / f"{dataset_id}.meta.json"
 
-    def _get_data_path(self, name: str, file_type: DatasetType) -> Path:
+    def _get_data_path(self, dataset_id: str, file_type: DatasetType) -> Path:
         """Get data file path for a dataset.
 
         Args:
-            name: Dataset name.
+            dataset_id: Stable dataset identifier.
             file_type: File type.
 
         Returns:
             Path to data file.
         """
-        return self._datasets_dir / f"{name}.{file_type.value}"
+        return self._datasets_dir / f"{dataset_id}.{file_type.value}"
+
+    def _resolve_data_path(self, metadata: DatasetMetadata) -> Path:
+        """Resolve the actual dataset file from metadata."""
+        if metadata.file_path:
+            file_path = Path(metadata.file_path)
+            if file_path.is_absolute():
+                return file_path
+
+            candidates = [
+                self._datasets_dir / file_path,
+                self._project_root / file_path,
+                file_path,
+            ]
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate
+            return candidates[0]
+
+        return self._get_data_path(metadata.id, metadata.file_type)
 
     def _detect_file_type(self, filename: str) -> Optional[DatasetType]:
         """Detect file type from filename.
@@ -135,25 +159,28 @@ class DatasetService:
             return DatasetType.CSV
         return None
 
-    def _load_metadata(self, name: str) -> Optional[DatasetMetadata]:
+    def _load_metadata(self, dataset_id: str) -> Optional[DatasetMetadata]:
         """Load metadata from file.
 
         Args:
-            name: Dataset name.
+            dataset_id: Stable dataset identifier.
 
         Returns:
             DatasetMetadata or None.
         """
-        meta_path = self._get_meta_path(name)
+        meta_path = self._get_meta_path(dataset_id)
         if not meta_path.exists():
             return None
 
         try:
             with meta_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            return DatasetMetadata.from_dict(data)
+            metadata = DatasetMetadata.from_dict(data, dataset_id=dataset_id)
+            if not metadata.file_path:
+                metadata.file_path = self._get_data_path(dataset_id, metadata.file_type).name
+            return metadata
         except Exception as e:
-            logger.warning("Failed to load metadata for %s: %s", name, e)
+            logger.warning("Failed to load metadata for %s: %s", dataset_id, e)
             return None
 
     def _save_metadata(self, metadata: DatasetMetadata) -> None:
@@ -162,7 +189,7 @@ class DatasetService:
         Args:
             metadata: Metadata to save.
         """
-        meta_path = self._get_meta_path(metadata.name)
+        meta_path = self._get_meta_path(metadata.id or metadata.name)
         with meta_path.open("w", encoding="utf-8") as f:
             json.dump(metadata.to_dict(), f, indent=2, ensure_ascii=False)
 
@@ -265,16 +292,16 @@ class DatasetService:
 
         # First, load from metadata files
         for meta_path in self._datasets_dir.glob("*.meta.json"):
-            name = meta_path.stem.replace(".meta", "")
-            metadata = self._load_metadata(name)
+            dataset_id = meta_path.stem.replace(".meta", "")
+            metadata = self._load_metadata(dataset_id)
             if metadata:
                 # Verify data file exists
-                data_path = self._get_data_path(metadata.name, metadata.file_type)
+                data_path = self._resolve_data_path(metadata)
                 if data_path.exists():
                     datasets.append(metadata)
-                    self._metadata_cache[name] = metadata
+                    self._metadata_cache[dataset_id] = metadata
                 else:
-                    logger.warning("Data file missing for dataset: %s", name)
+                    logger.warning("Data file missing for dataset: %s (%s)", dataset_id, data_path)
 
         self._cache_loaded = True
         logger.info("Scanned %d datasets", len(datasets))
@@ -290,11 +317,11 @@ class DatasetService:
             self.scan()
         return list(self._metadata_cache.values())
 
-    def get_dataset(self, name: str) -> Optional[DatasetMetadata]:
+    def get_dataset(self, dataset_id: str) -> Optional[DatasetMetadata]:
         """Get dataset by name.
 
         Args:
-            name: Dataset name.
+            dataset_id: Stable dataset identifier.
 
         Returns:
             DatasetMetadata or None.
@@ -302,13 +329,13 @@ class DatasetService:
         if not self._cache_loaded:
             self.scan()
 
-        if name in self._metadata_cache:
-            return self._metadata_cache[name]
+        if dataset_id in self._metadata_cache:
+            return self._metadata_cache[dataset_id]
 
         # Try loading from file
-        metadata = self._load_metadata(name)
+        metadata = self._load_metadata(dataset_id)
         if metadata:
-            self._metadata_cache[name] = metadata
+            self._metadata_cache[dataset_id] = metadata
         return metadata
 
     def upload_dataset(
@@ -339,16 +366,16 @@ class DatasetService:
 
         # Extract base name without extension
         base_name = Path(filename).stem
-        name = base_name
+        dataset_id = base_name
 
         # Handle duplicate names
         counter = 1
-        while self._get_data_path(name, file_type).exists():
-            name = f"{base_name}_{counter}"
+        while self._get_data_path(dataset_id, file_type).exists() or self._get_meta_path(dataset_id).exists():
+            dataset_id = f"{base_name}_{counter}"
             counter += 1
 
         # Get file paths
-        data_path = self._get_data_path(name, file_type)
+        data_path = self._get_data_path(dataset_id, file_type)
         # Save data file
         data_path.write_bytes(content)
         file_size = len(content)
@@ -396,7 +423,8 @@ class DatasetService:
 
         # Create metadata
         metadata = DatasetMetadata(
-            name=name,
+            id=dataset_id,
+            name=dataset_id,
             description=description,
             file_path=data_path.name,
             file_type=file_type,
@@ -410,9 +438,9 @@ class DatasetService:
 
         # Save metadata
         self._save_metadata(metadata)
-        self._metadata_cache[name] = metadata
+        self._metadata_cache[dataset_id] = metadata
 
-        logger.info("Uploaded dataset: %s (%d rows)", name, row_count)
+        logger.info("Uploaded dataset: %s (%d rows)", dataset_id, row_count)
         return metadata
 
     def delete_dataset(self, name: str) -> bool:
@@ -430,7 +458,7 @@ class DatasetService:
 
         try:
             # Delete data file
-            data_path = self._get_data_path(name, metadata.file_type)
+            data_path = self._resolve_data_path(metadata)
             if data_path.exists():
                 data_path.unlink()
 
@@ -470,7 +498,7 @@ class DatasetService:
         if not metadata:
             raise ValueError(f"Dataset not found: {name}")
 
-        data_path = self._get_data_path(name, metadata.file_type)
+        data_path = self._resolve_data_path(metadata)
         if not data_path.exists():
             raise ValueError(f"Data file not found: {data_path}")
 
@@ -502,7 +530,9 @@ class DatasetService:
             raise ValueError(f"Failed to preview dataset: {e}")
 
         return {
-            "name": name,
+            "id": metadata.id,
+            "name": metadata.name,
+            "file_path": metadata.file_path,
             "total_rows": metadata.row_count,
             "preview_rows": len(records),
             "columns": metadata.columns,

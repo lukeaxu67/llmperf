@@ -47,10 +47,22 @@ export default function DatasetSelector() {
     }
   }
 
-  const fetchPreview = async (name: string) => {
+  useEffect(() => {
+    if (!selectedDataset || datasets.length === 0) {
+      return
+    }
+
+    const matched = datasets.find((item) => item.id === selectedDataset)
+      || datasets.find((item) => item.name === selectedDataset)
+    if (matched && matched.id !== selectedDataset) {
+      setSelectedDataset(matched.id, matched.file_path || null, matched.file_type || null)
+    }
+  }, [datasets, selectedDataset, setSelectedDataset])
+
+  const fetchPreview = async (datasetId: string) => {
     setLoadingPreview(true)
     try {
-      const response = await datasetApi.preview(name, 5) as any
+      const response = await datasetApi.preview(datasetId, 5) as any
       setPreviewData(response?.records || [])
     } catch (error) {
       console.error('Failed to fetch preview:', error)
@@ -60,14 +72,14 @@ export default function DatasetSelector() {
     }
   }
 
-  const handleSelectDataset = (name: string | null) => {
-    if (!name) {
+  const handleSelectDataset = (datasetId: string | null) => {
+    if (!datasetId) {
       setSelectedDataset(null, null, null)
       return
     }
 
-    const dataset = datasets.find((item) => item.name === name)
-    setSelectedDataset(name, dataset?.file_path || null, dataset?.file_type || null)
+    const dataset = datasets.find((item) => item.id === datasetId)
+    setSelectedDataset(datasetId, dataset?.file_path || null, dataset?.file_type || null)
   }
 
   return (
@@ -107,11 +119,11 @@ export default function DatasetSelector() {
               renderItem={(dataset) => (
                 <List.Item
                   style={{ cursor: 'pointer' }}
-                  onClick={() => handleSelectDataset(dataset.name)}
+                  onClick={() => handleSelectDataset(dataset.id)}
                 >
                   <List.Item.Meta
                     avatar={
-                      <Radio value={dataset.name} />
+                      <Radio value={dataset.id} />
                     }
                     title={
                       <Space>
@@ -120,7 +132,7 @@ export default function DatasetSelector() {
                       </Space>
                     }
                     description={
-                      <Space size="large">
+                      <Space size="large" wrap>
                         <Text type="secondary">
                           {dataset.record_count || dataset.row_count || 0} 条记录
                         </Text>
@@ -128,6 +140,7 @@ export default function DatasetSelector() {
                           {dataset.size ? ((dataset.size || 0) / 1024).toFixed(1) : '0'} KB
                         </Text>
                         <Tag>{(dataset.format || 'jsonl').toUpperCase()}</Tag>
+                        <Text code>{dataset.file_path}</Text>
                       </Space>
                     }
                   />
