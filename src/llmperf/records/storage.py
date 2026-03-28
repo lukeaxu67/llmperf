@@ -45,6 +45,71 @@ class Storage:
         self.db = Database(db_path)
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _normalize_run_status(
+        raw_status: str | None,
+        *,
+        started_at: int = 0,
+        scheduled_at: int = 0,
+        completed_at: int = 0,
+        error_message: str = "",
+    ) -> str:
+        known_statuses = {
+            "scheduled",
+            "pending",
+            "running",
+            "paused",
+            "completed",
+            "failed",
+            "cancelled",
+        }
+        status = str(raw_status or "").strip().lower()
+        if status not in known_statuses:
+            status = "pending"
+
+        if status != "pending":
+            return status
+
+        error_text = str(error_message or "").strip().lower()
+        if completed_at:
+            if "cancel" in error_text or "取消" in error_text:
+                return "cancelled"
+            if error_text:
+                return "failed"
+            return "completed"
+        if started_at:
+            return "running"
+        if scheduled_at and scheduled_at > int(time.time()):
+            return "scheduled"
+        return "pending"
+
+    def _serialize_run(self, row: RunORM) -> dict:
+        started_at = int(getattr(row, "started_at", 0) or 0)
+        scheduled_at = int(getattr(row, "scheduled_at", 0) or 0)
+        completed_at = int(getattr(row, "completed_at", 0) or 0)
+        error_message = getattr(row, "error_message", "") or ""
+        return {
+            "run_id": row.id,
+            "task_type": row.task_type,
+            "status": self._normalize_run_status(
+                getattr(row, "status", "pending"),
+                started_at=started_at,
+                scheduled_at=scheduled_at,
+                completed_at=completed_at,
+                error_message=error_message,
+            ),
+            "info": row.info,
+            "created_at": row.created_at,
+            "started_at": started_at,
+            "scheduled_at": scheduled_at,
+            "completed_at": completed_at,
+            "error_message": error_message,
+            "config_path": row.config_path,
+            "config_content": getattr(row, "config_content", ""),
+            "total_cost": getattr(row, "total_cost", 0.0),
+            "currency": getattr(row, "currency", "CNY"),
+        }
+
     def close(self) -> None:
         self.db.close()
 
@@ -250,35 +315,30 @@ class Storage:
             List of run dictionaries.
         """
         with self.db.session() as session:
-            query = session.query(RunORM)
+            rows = session.query(RunORM).order_by(RunORM.created_at.desc()).all()
+            runs = [self._serialize_run(row) for row in rows]
             if status:
-                query = query.filter(RunORM.status == status)
-            rows = query.order_by(RunORM.created_at.desc()).offset(offset).limit(limit).all()
-            return [
-                {
-                    "run_id": row.id,
-                    "task_type": row.task_type,
-                    "status": getattr(row, "status", "pending"),
-                    "info": row.info,
-                    "created_at": row.created_at,
-                    "started_at": getattr(row, "started_at", 0),
-                    "scheduled_at": getattr(row, "scheduled_at", 0),
-                    "completed_at": getattr(row, "completed_at", 0),
-                    "error_message": getattr(row, "error_message", ""),
-                    "config_path": row.config_path,
-                    "config_content": getattr(row, "config_content", ""),
-                    "total_cost": getattr(row, "total_cost", 0.0),
-                    "currency": getattr(row, "currency", "CNY"),
-                }
-                for row in rows
-            ]
+                normalized_status = self._normalize_run_status(status)
+                runs = [run for run in runs if run["status"] == normalized_status]
+            return runs[offset: offset + limit]
 
     def count_runs(self, status: str | None = None) -> int:
         with self.db.session() as session:
-            query = session.query(RunORM)
-            if status:
-                query = query.filter(RunORM.status == status)
-            return query.count()
+            rows = session.query(RunORM).all()
+            if not status:
+                return len(rows)
+            normalized_status = self._normalize_run_status(status)
+            return sum(
+                1
+                for row in rows
+                if self._normalize_run_status(
+                    getattr(row, "status", "pending"),
+                    started_at=int(getattr(row, "started_at", 0) or 0),
+                    scheduled_at=int(getattr(row, "scheduled_at", 0) or 0),
+                    completed_at=int(getattr(row, "completed_at", 0) or 0),
+                    error_message=getattr(row, "error_message", "") or "",
+                ) == normalized_status
+            )
 
     def get_run(self, run_id: str) -> Optional[dict]:
         """Get a single run snapshot."""
@@ -286,21 +346,7 @@ class Storage:
             row = session.query(RunORM).filter(RunORM.id == run_id).first()
             if not row:
                 return None
-            return {
-                "run_id": row.id,
-                "task_type": row.task_type,
-                "status": getattr(row, "status", "pending"),
-                "info": row.info,
-                "created_at": row.created_at,
-                "started_at": getattr(row, "started_at", 0),
-                "scheduled_at": getattr(row, "scheduled_at", 0),
-                "completed_at": getattr(row, "completed_at", 0),
-                "error_message": getattr(row, "error_message", ""),
-                "config_path": row.config_path,
-                "config_content": getattr(row, "config_content", ""),
-                "total_cost": getattr(row, "total_cost", 0.0),
-                "currency": getattr(row, "currency", "CNY"),
-            }
+            return self._serialize_run(row)
 
     def update_run_cost(self, run_id: str, total_cost: float, currency: str = "CNY") -> None:
         """Update the total cost for a run."""

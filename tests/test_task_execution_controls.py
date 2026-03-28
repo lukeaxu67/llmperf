@@ -24,9 +24,9 @@ info: "Web Task"
 dataset:
   source:
     type: "jsonl"
-    name: "test_3"
+    name: "test"
     config:
-      path: "resource/test_3.jsonl"
+      path: "resource/test.jsonl"
   iterator:
     mutation_chain: ["identity"]
     max_rounds: 1
@@ -37,6 +37,34 @@ executors:
     impl: "chat"
     concurrency: 1
     model: "mock-model"
+"""
+
+
+CHAIN_WEB_CONFIG = """
+info: "Chained Task"
+dataset:
+  source:
+    type: "jsonl"
+    name: "test_3"
+    config:
+      path: "resource/test_3.jsonl"
+  iterator:
+    mutation_chain: ["identity"]
+    max_rounds: 1
+executors:
+  - id: "exec-a"
+    name: "Executor A"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-a"
+  - id: "exec-b"
+    name: "Executor B"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-b"
+    after: ["exec-a"]
 """
 
 
@@ -278,6 +306,68 @@ def test_task_service_restores_running_tasks_after_restart(tmp_path, monkeypatch
         time.sleep(0.05)
 
     assert calls == ["run-restored"]
+
+
+def test_storage_infers_legacy_run_statuses_from_timestamps(tmp_path):
+    db_path = tmp_path / "legacy-status.sqlite"
+    storage = Storage(str(db_path))
+    config, normalized_content = load_run_config_content(LEGACY_WEB_CONFIG)
+
+    storage.register_run(
+        "run-legacy-completed",
+        config,
+        config_path="",
+        config_content=normalized_content,
+        task_type="benchmark",
+        status="pending",
+    )
+    storage.update_run_status(
+        "run-legacy-completed",
+        status="pending",
+        started_at=int(time.time()) - 30,
+        completed_at=int(time.time()) - 5,
+        error_message="",
+    )
+
+    storage.register_run(
+        "run-legacy-running",
+        config,
+        config_path="",
+        config_content=normalized_content,
+        task_type="benchmark",
+        status="pending",
+    )
+    storage.update_run_status(
+        "run-legacy-running",
+        status="pending",
+        started_at=int(time.time()) - 20,
+        completed_at=0,
+        error_message="",
+    )
+
+    assert storage.get_run("run-legacy-completed")["status"] == "completed"
+    assert storage.get_run("run-legacy-running")["status"] == "running"
+    assert storage.count_runs("completed") == 1
+    assert storage.count_runs("running") == 1
+
+
+def test_task_service_marks_topology_end_node_completed_when_all_executors_completed(tmp_path, monkeypatch):
+    db_path = tmp_path / "end-node.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config, _ = load_run_config_content(CHAIN_WEB_CONFIG)
+    service = TaskService()
+    topology = service._build_topology(
+        config,
+        [
+            {"id": "exec-a", "name": "Executor A", "status": "completed"},
+            {"id": "exec-b", "name": "Executor B", "status": "completed"},
+        ],
+    )
+
+    end_node = next(node for node in topology["nodes"] if node["id"] == "__end__")
+    assert end_node["status"] == "completed"
 
 
 def test_openai_chat_executor_uses_runtime_pricing_when_catalog_missing(tmp_path, monkeypatch):

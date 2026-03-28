@@ -365,6 +365,8 @@ class TaskService:
             if downstream_count.get(executor.id, 0) == 0:
                 edges.append({"source": executor.id, "target": "__end__"})
 
+        end_status = self._resolve_end_node_status(executors)
+
         node_items = [
             {
                 "id": "__start__",
@@ -387,7 +389,7 @@ class TaskService:
                 "id": "__end__",
                 "name": "End",
                 "kind": "boundary",
-                "status": "pending",
+                "status": end_status,
                 "level": max(levels.values(), default=0) + 1,
             }
         )
@@ -405,6 +407,28 @@ class TaskService:
             "edges": edges,
             "layers": layers,
         }
+
+    @staticmethod
+    def _resolve_end_node_status(executors: List[Dict[str, Any]]) -> str:
+        if not executors:
+            return TaskStatus.PENDING.value
+
+        statuses = {str(item.get("status") or TaskStatus.PENDING.value) for item in executors}
+        if statuses == {TaskStatus.COMPLETED.value}:
+            return TaskStatus.COMPLETED.value
+
+        for status in (
+            TaskStatus.RUNNING.value,
+            TaskStatus.PAUSED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.CANCELLED.value,
+            "blocked",
+            TaskStatus.PENDING.value,
+        ):
+            if status in statuses:
+                return status
+
+        return TaskStatus.COMPLETED.value if TaskStatus.COMPLETED.value in statuses else TaskStatus.PENDING.value
 
     def _build_executor_progress(
         self,
