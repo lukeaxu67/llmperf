@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -14,6 +15,8 @@ from llmperf.records.model import RunRecord
 from llmperf.records.storage import Storage
 from llmperf.web.main import create_app
 from llmperf.web import main as web_main
+from llmperf.web.services.run_config_service import load_run_config_content
+from llmperf.web.services.task_service import TaskService
 
 
 LEGACY_WEB_CONFIG = """
@@ -241,6 +244,40 @@ def test_executor_resume_skips_completed_dataset_rows(tmp_path):
     executor.run("run-1", rows, storage)
 
     assert executor.processed_ids == ["row-2"]
+
+
+def test_task_service_restores_running_tasks_after_restart(tmp_path, monkeypatch):
+    db_path = tmp_path / "restore-running.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config, normalized_content = load_run_config_content(LEGACY_WEB_CONFIG)
+    storage = Storage(str(db_path))
+    storage.register_run(
+        "run-restored",
+        config,
+        config_path="",
+        config_content=normalized_content,
+        task_type="benchmark",
+        status="running",
+    )
+    storage.update_run_status("run-restored", status="running", started_at=int(time.time()))
+
+    calls: list[str] = []
+
+    def fake_run_task(self, run_id: str) -> None:
+        calls.append(run_id)
+
+    monkeypatch.setattr(TaskService, "run_task", fake_run_task)
+
+    service = TaskService()
+    assert "run-restored" in service._tasks
+
+    deadline = time.time() + 2
+    while time.time() < deadline and calls != ["run-restored"]:
+        time.sleep(0.05)
+
+    assert calls == ["run-restored"]
 
 
 def test_openai_chat_executor_uses_runtime_pricing_when_catalog_missing(tmp_path, monkeypatch):

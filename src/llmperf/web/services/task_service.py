@@ -114,32 +114,46 @@ class TaskService:
         runtime = load_runtime_config()
         self._db_path = str(runtime.db_path)
         self._storage = Storage(self._db_path)
-        self._restore_scheduled_tasks()
+        self._restore_recoverable_tasks()
 
-    def _restore_scheduled_tasks(self) -> None:
+    def _restore_recoverable_tasks(self) -> None:
         try:
-            scheduled_runs = self._storage.list_runs(limit=1000, status=TaskStatus.SCHEDULED.value)
+            recoverable_runs = self._storage.list_runs(limit=1000)
         except Exception as exc:
-            logger.warning("Failed to restore scheduled tasks: %s", exc)
+            logger.warning("Failed to restore tasks after restart: %s", exc)
             return
 
-        for run in scheduled_runs:
+        now = datetime.now()
+        for run in recoverable_runs:
             task_info = self._build_task_info_from_snapshot(run)
             if not task_info.run_id:
                 continue
+
+            if task_info.status not in (TaskStatus.SCHEDULED, TaskStatus.RUNNING):
+                continue
+
             self._tasks[task_info.run_id] = task_info
             self._progress.setdefault(
                 task_info.run_id,
-                TaskProgress(run_id=task_info.run_id, status=task_info.status),
+                TaskProgress(
+                    run_id=task_info.run_id,
+                    status=task_info.status,
+                    started_at=task_info.started_at,
+                ),
             )
             config_content = run.get("config_content") or ""
             if config_content:
                 self._config_contents[task_info.run_id] = config_content
 
-            if task_info.scheduled_at and task_info.scheduled_at > datetime.now():
-                self.schedule_task(task_info.run_id, task_info.scheduled_at)
-            else:
-                threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
+            if task_info.status == TaskStatus.SCHEDULED:
+                if task_info.scheduled_at and task_info.scheduled_at > now:
+                    self.schedule_task(task_info.run_id, task_info.scheduled_at)
+                else:
+                    threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
+                continue
+
+            logger.info("Restoring interrupted running task %s after service restart", task_info.run_id)
+            threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
 
     def _load_run_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self._storage.get_run(run_id)
@@ -452,7 +466,7 @@ class TaskService:
             progress_percent = min(100.0, (completed / total) * 100) if total > 0 else 0.0
 
             if total > 0 and completed >= total:
-                status = TaskStatus.COMPLETED.value
+                status = TaskStatus.FAILED.value if error_count > 0 else TaskStatus.COMPLETED.value
             elif completed > 0:
                 status = TaskStatus.PAUSED.value if task_status == TaskStatus.PAUSED else TaskStatus.RUNNING.value
             elif task_status in (TaskStatus.RUNNING, TaskStatus.PAUSED) and executor.id in ready_batch:

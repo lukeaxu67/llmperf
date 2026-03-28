@@ -7,7 +7,7 @@ const NODE_WIDTH = 220
 const NODE_HEIGHT = 112
 const H_GAP = 90
 const V_GAP = 36
-const PADDING = 32
+const PADDING = 48
 
 const STATUS_COLORS: Record<string, string> = {
   completed: '#52c41a',
@@ -39,7 +39,8 @@ export default function ExecutorTopologyGraph({
   })
   const orderedLevels = Array.from(layers.keys()).sort((a, b) => a - b)
   const maxRows = Math.max(...Array.from(layers.values()).map((nodes) => nodes.length), 1)
-  const graphHeight = height || Math.max(260, maxRows * (NODE_HEIGHT + V_GAP) + PADDING * 2)
+  const computedHeight = Math.max(260, maxRows * (NODE_HEIGHT + V_GAP) + PADDING * 2)
+  const graphHeight = Math.max(height || 0, computedHeight)
   const graphWidth = orderedLevels.length * (NODE_WIDTH + H_GAP) + PADDING * 2
 
   const positions = new Map<string, { x: number; y: number }>()
@@ -56,7 +57,7 @@ export default function ExecutorTopologyGraph({
   })
 
   return (
-    <div style={{ overflowX: 'auto', paddingBottom: 8 }}>
+    <div style={{ overflow: 'auto', paddingBottom: 8, paddingRight: 8 }}>
       <div style={{ position: 'relative', width: graphWidth, height: graphHeight }}>
         <svg
           width={graphWidth}

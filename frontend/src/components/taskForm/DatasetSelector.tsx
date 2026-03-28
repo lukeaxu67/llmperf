@@ -1,10 +1,5 @@
-/**
- * Dataset selection component
- * Allows users to select from available datasets and enter task description
- */
-
 import { useEffect, useState } from 'react'
-import { Radio, Card, Input, List, Spin, Empty, Tag, Space, Typography } from 'antd'
+import { Card, Empty, Input, List, Radio, Space, Spin, Tag, Typography } from 'antd'
 import { DatabaseOutlined, FileTextOutlined } from '@ant-design/icons'
 import { datasetApi, Dataset } from '@/services/api'
 import useTaskFormStore from '@/stores/taskFormStore'
@@ -21,12 +16,10 @@ export default function DatasetSelector() {
   const [previewData, setPreviewData] = useState<any[]>([])
   const [loadingPreview, setLoadingPreview] = useState(false)
 
-  // Fetch datasets on mount
   useEffect(() => {
     fetchDatasets()
   }, [])
 
-  // Fetch preview when dataset is selected
   useEffect(() => {
     if (selectedDataset) {
       fetchPreview(selectedDataset)
@@ -86,7 +79,7 @@ export default function DatasetSelector() {
     <div>
       <Card title="任务描述" style={{ marginBottom: 16 }}>
         <TextArea
-          placeholder="输入任务描述（可选）"
+          placeholder="输入任务描述，可选"
           value={taskDescription}
           onChange={(e) => setTaskDescription(e.target.value)}
           rows={2}
@@ -96,16 +89,16 @@ export default function DatasetSelector() {
       </Card>
 
       <Card
-        title={
+        title={(
           <Space>
             <DatabaseOutlined />
             <span>选择数据集</span>
           </Space>
-        }
+        )}
         style={{ marginBottom: 16 }}
       >
         {loading ? (
-          <Spin tip="加载数据集..." />
+          <Spin tip="加载数据集中..." />
         ) : datasets.length === 0 ? (
           <Empty description="暂无数据集，请先上传数据集" />
         ) : (
@@ -117,21 +110,16 @@ export default function DatasetSelector() {
             <List
               dataSource={datasets}
               renderItem={(dataset) => (
-                <List.Item
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => handleSelectDataset(dataset.id)}
-                >
+                <List.Item style={{ cursor: 'pointer' }} onClick={() => handleSelectDataset(dataset.id)}>
                   <List.Item.Meta
-                    avatar={
-                      <Radio value={dataset.id} />
-                    }
-                    title={
+                    avatar={<Radio value={dataset.id} />}
+                    title={(
                       <Space>
                         <FileTextOutlined />
                         <span>{dataset.name}</span>
                       </Space>
-                    }
-                    description={
+                    )}
+                    description={(
                       <Space size="large" wrap>
                         <Text type="secondary">
                           {dataset.record_count || dataset.row_count || 0} 条记录
@@ -142,7 +130,7 @@ export default function DatasetSelector() {
                         <Tag>{(dataset.format || 'jsonl').toUpperCase()}</Tag>
                         <Text code>{dataset.file_path}</Text>
                       </Space>
-                    }
+                    )}
                   />
                 </List.Item>
               )}
@@ -154,15 +142,16 @@ export default function DatasetSelector() {
       {selectedDataset && (
         <Card
           title="数据预览（前 5 条）"
-          extra={
-            <Tag color="blue">{previewData.length} 条记录</Tag>
-          }
+          extra={<Tag color="blue">{previewData.length} 条记录</Tag>}
+          styles={{ body: { maxHeight: 520, overflowY: 'auto' } }}
         >
           {loadingPreview ? (
-            <Spin tip="加载预览..." />
+            <Spin tip="加载预览中..." />
           ) : previewData.length === 0 ? (
             <Empty description="无法加载预览数据" />
-          ) : <DatasetPreviewList records={previewData} />}
+          ) : (
+            <DatasetPreviewList records={previewData} />
+          )}
         </Card>
       )}
     </div>

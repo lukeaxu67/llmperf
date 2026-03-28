@@ -56,6 +56,25 @@ function metricColor(value: number, baseline?: number, reverse = false): string 
   return value >= baseline ? '#52c41a' : '#ff4d4f'
 }
 
+function executorStatusColor(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'success'
+    case 'running':
+      return 'processing'
+    case 'paused':
+      return 'warning'
+    case 'failed':
+      return 'error'
+    case 'cancelled':
+      return 'default'
+    case 'blocked':
+      return 'orange'
+    default:
+      return 'default'
+  }
+}
+
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -281,6 +300,9 @@ export default function TaskDetail() {
             <Space size="middle" style={{ marginTop: 8 }} wrap>
               <StatusTag status={task.status as any} />
               <Text type="secondary">Run ID: {task.run_id}</Text>
+              {task.scheduled_at && (
+                <Text type="secondary">计划执行时间: {dayjs(task.scheduled_at).format('YYYY-MM-DD HH:mm:ss')}</Text>
+              )}
               {report?.generated_at && (
                 <Text type="secondary">报告生成时间: {dayjs(report.generated_at).format('YYYY-MM-DD HH:mm:ss')}</Text>
               )}
@@ -350,11 +372,15 @@ export default function TaskDetail() {
                     <Space direction="vertical" style={{ width: '100%' }} size={8}>
                       <Space wrap>
                         <Text strong>{executor.name}</Text>
-                        <Tag color={executor.status === 'completed' ? 'success' : executor.status === 'running' ? 'processing' : 'default'}>
+                        <Tag color={executorStatusColor(executor.status)}>
                           {executor.status}
                         </Tag>
                       </Space>
-                      <Progress percent={Math.round(executor.progress_percent)} size="small" />
+                      <Progress
+                        percent={Math.round(executor.progress_percent)}
+                        size="small"
+                        status={executor.status === 'failed' ? 'exception' : 'normal'}
+                      />
                       <Text type="secondary">
                         {executor.completed}/{executor.total}，成功 {executor.success_count}，失败 {executor.error_count}
                       </Text>
