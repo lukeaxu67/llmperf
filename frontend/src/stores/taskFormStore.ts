@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import {
   TaskFormState,
   ExecutorConfig,
@@ -68,7 +69,18 @@ const initialState: TaskFormState = {
   currentStep: 0,
 }
 
-export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
+const persistedState = (state: TaskFormStore): TaskFormState & { taskType: TaskType } => ({
+  taskDescription: state.taskDescription,
+  selectedDataset: state.selectedDataset,
+  selectedDatasetPath: state.selectedDatasetPath,
+  selectedDatasetType: state.selectedDatasetType,
+  iteratorConfig: state.iteratorConfig,
+  executors: state.executors,
+  currentStep: state.currentStep,
+  taskType: state.taskType,
+})
+
+export const useTaskFormStore = create<TaskFormStore>()(persist((set, get) => ({
   ...initialState,
   taskType: 'benchmark',
 
@@ -245,6 +257,10 @@ export const useTaskFormStore = create<TaskFormStore>((set, get) => ({
       errors,
     }
   },
+}), {
+  name: 'llmperf-task-form',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: persistedState,
 }))
 
 export default useTaskFormStore

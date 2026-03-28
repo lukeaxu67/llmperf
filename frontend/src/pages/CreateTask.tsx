@@ -3,7 +3,7 @@
  * Step-by-step task creation wizard
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -81,11 +81,6 @@ export default function CreateTask() {
   const [yamlValid, setYamlValid] = useState(false)
   const [testRunOpen, setTestRunOpen] = useState(false)
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null)
-
-  // Reset form on mount
-  useEffect(() => {
-    reset()
-  }, [])
 
   // Validate current step before proceeding
   const canProceed = () => {

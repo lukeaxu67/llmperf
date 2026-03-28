@@ -385,7 +385,7 @@ export interface TestRunResponse {
 // Extend taskApi with testRun
 export const testRunApi = {
   run: (data: TestRunRequest) =>
-    api.post<TestRunResponse>('/tasks/test-run', data),
+    api.post<TestRunResponse>('/tasks/test-run', data, { timeout: 300000 }),
 }
 
 // Extended report types
