@@ -220,9 +220,12 @@ class OpenAIChatProvider(BaseProvider):
         finally:
             accumulator.finalize(success=not stream_failed, final_ts=final_ts)
 
-        if not record.reasoning and not record.content:
-            record.status = -1
-            record.info = json.dumps({"desc": "no content"})
+        if stream_failed:
+            record.status = record.status or -1
+        elif not record.reasoning and not record.content:
+            record.status = record.status or -1
+            if not record.info or record.info == "{}":
+                record.info = json.dumps({"desc": "no content"}, ensure_ascii=False)
         else:
             record.status = record.status or 200
         return record

@@ -166,6 +166,18 @@ def _format_test_run_error(status: int, info: str) -> Dict[str, Any]:
         detail_parts.append(f"请求ID: {request_id}")
 
     body = parsed.get("body") or parsed.get("response")
+    provider_error = body.get("error") if isinstance(body, dict) else None
+    provider_message = provider_error.get("message") if isinstance(provider_error, dict) else None
+    provider_type = provider_error.get("type") if isinstance(provider_error, dict) else None
+    provider_code = provider_error.get("code") if isinstance(provider_error, dict) else None
+
+    if provider_type:
+        detail_parts.append(f"服务错误类型: {provider_type}")
+    if provider_code and provider_code != provider_type:
+        detail_parts.append(f"服务错误码: {provider_code}")
+    if provider_message:
+        detail_parts.append(f"服务错误信息: {provider_message}")
+
     if body not in (None, "", {}):
         body_text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
         detail_parts.append(f"响应体: {body_text[:1200]}")
@@ -173,7 +185,7 @@ def _format_test_run_error(status: int, info: str) -> Dict[str, Any]:
     message = "\n".join(detail_parts) if detail_parts else f"Request failed with status {status}"
     return {
         "status_code": status_code if isinstance(status_code, int) else status,
-        "error_type": error_type or "",
+        "error_type": error_type or provider_type or "",
         "error_detail": parsed,
         "error_message": message,
     }

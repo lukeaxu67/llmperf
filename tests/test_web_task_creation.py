@@ -132,3 +132,36 @@ def test_test_run_returns_actionable_error_details(monkeypatch):
     assert "状态码: 401" in body["results"][0]["error"]
     assert "错误信息: Invalid API key" in body["results"][0]["error"]
     assert "请求ID: req_123" in body["results"][0]["error"]
+
+
+def test_openai_chat_provider_preserves_exception_details_when_no_content(monkeypatch):
+    class FakeCompletions:
+        def create(self, **kwargs):
+            raise RuntimeError("Model access denied.")
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(OpenAIChatProvider, "build_client", lambda self, options: FakeClient())
+
+    provider = OpenAIChatProvider("qianwen")
+    record = provider.invoke(
+        ProviderRequest(
+            run_id="run-2",
+            executor_id="exec-2",
+            dataset_row_id="row-2",
+            provider="qianwen",
+            model="qwen3.5-plus",
+            messages=[{"role": "user", "content": "ping"}],
+            options={},
+        )
+    )
+
+    assert record.status == -1
+    assert "Model access denied." in record.info
+    assert "no content" not in record.info
