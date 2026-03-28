@@ -432,6 +432,36 @@ async def get_quick_report(run_id: str):
 
 
 @router.post(
+    "/{run_id}/start",
+    response_model=TaskResponse,
+    summary="Start a pending or scheduled task immediately",
+)
+async def start_task(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+):
+    service = get_service()
+    success = service.start_task(run_id)
+
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task cannot be started immediately (not found or already started)",
+        )
+
+    background_tasks.add_task(service.run_task, run_id)
+    task_info = service.get_task(run_id)
+
+    return TaskResponse(
+        run_id=run_id,
+        status=task_info.status if task_info else TaskStatus.PENDING,
+        message="Task start requested",
+        created_at=task_info.created_at if task_info else None,
+        scheduled_at=task_info.scheduled_at if task_info else None,
+    )
+
+
+@router.post(
     "/{run_id}/cancel",
     response_model=TaskResponse,
     summary="Cancel a task",

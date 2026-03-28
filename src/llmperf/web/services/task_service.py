@@ -696,6 +696,38 @@ class TaskService:
             scheduled_at=scheduled_at,
         )
 
+    def start_task(self, run_id: str) -> bool:
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                return False
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+            self._progress.setdefault(run_id, TaskProgress(run_id=run_id, status=task_info.status))
+
+        if task_info.status not in (TaskStatus.SCHEDULED, TaskStatus.PENDING):
+            return False
+
+        scheduled_timer = self._scheduled_timers.pop(run_id, None)
+        if scheduled_timer:
+            scheduled_timer.cancel()
+
+        task_info.status = TaskStatus.PENDING
+        task_info.scheduled_at = None
+
+        progress = self._progress.get(run_id)
+        if progress:
+            progress.status = TaskStatus.PENDING
+
+        self._storage.update_run_status(
+            run_id,
+            status=TaskStatus.PENDING.value,
+            scheduled_at=0,
+            error_message="",
+        )
+        return True
+
     def run_task(self, run_id: str) -> None:
         """Run a task in the background.
 

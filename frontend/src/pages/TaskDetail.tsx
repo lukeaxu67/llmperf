@@ -107,7 +107,12 @@ export default function TaskDetail() {
     if (!id) {
       return
     }
-    if (task?.status !== 'running' && task?.status !== 'paused') {
+    if (
+      task?.status !== 'scheduled'
+      && task?.status !== 'pending'
+      && task?.status !== 'running'
+      && task?.status !== 'paused'
+    ) {
       return
     }
     const timer = window.setInterval(() => {
@@ -180,6 +185,17 @@ export default function TaskDetail() {
     }
   }
 
+  const handleStartNow = async () => {
+    if (!id) return
+    try {
+      await taskApi.start(id)
+      message.success('任务已开始执行')
+      loadTaskBundle(id, true)
+    } catch (error: any) {
+      message.error(error.message || '立即启动失败')
+    }
+  }
+
   const executorItems = useMemo<ExecutorProgress[]>(
     () => report?.executor_summary || progress?.executors || [],
     [progress, report],
@@ -223,6 +239,12 @@ export default function TaskDetail() {
         <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
           生成 HTML 报告
         </Button>
+        {(task.status === 'scheduled' || task.status === 'pending') && (
+          <>
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStartNow}>立即启动</Button>
+            <Button danger icon={<StopOutlined />} onClick={handleStop}>取消任务</Button>
+          </>
+        )}
         {task.status === 'running' && (
           <>
             <Button icon={<PauseCircleOutlined />} onClick={handlePause}>暂停</Button>

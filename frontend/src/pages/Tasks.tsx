@@ -23,6 +23,7 @@ import {
   EyeOutlined,
   StopOutlined,
   RedoOutlined,
+  PlayCircleOutlined,
   FileTextOutlined,
   DollarOutlined,
   CopyOutlined,
@@ -55,7 +56,13 @@ export default function Tasks() {
   }, [page, pageSize, statusFilter])
 
   useEffect(() => {
-    const activeTasks = tasks.filter((t) => t.status === 'running' || t.status === 'paused')
+    const activeTasks = tasks.filter(
+      (t) =>
+        t.status === 'scheduled'
+        || t.status === 'pending'
+        || t.status === 'running'
+        || t.status === 'paused',
+    )
     if (activeTasks.length === 0) {
       return
     }
@@ -122,6 +129,16 @@ export default function Tasks() {
       fetchTasks()
     } catch (error: any) {
       message.error(error.message || '重新执行失败')
+    }
+  }
+
+  const handleStart = async (runId: string) => {
+    try {
+      await taskApi.start(runId)
+      message.success('任务已开始执行')
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.message || '立即启动失败')
     }
   }
 
@@ -259,6 +276,16 @@ export default function Tasks() {
               onClick={() => handleReuseConfig(record.run_id)}
             />
           </Tooltip>
+          {(record.status === 'scheduled' || record.status === 'pending') && (
+            <Tooltip title="立即启动">
+              <Button
+                type="text"
+                size="small"
+                icon={<PlayCircleOutlined />}
+                onClick={() => handleStart(record.run_id)}
+              />
+            </Tooltip>
+          )}
           {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
             <Tooltip title="立即重跑">
               <Button

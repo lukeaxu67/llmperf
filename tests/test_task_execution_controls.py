@@ -117,6 +117,42 @@ def test_rerun_endpoint_reuses_existing_config(tmp_path, monkeypatch):
         assert source_config == rerun_config
 
 
+def test_start_endpoint_starts_scheduled_task_immediately(tmp_path, monkeypatch):
+    db_path = tmp_path / "start.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        scheduled_at = (datetime.now() + timedelta(minutes=10)).isoformat()
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": LEGACY_WEB_CONFIG,
+                "auto_start": False,
+                "scheduled_at": scheduled_at,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        service = web_main.get_task_service()
+        calls: list[str] = []
+
+        def fake_run_task(target_run_id: str) -> None:
+            calls.append(target_run_id)
+
+        monkeypatch.setattr(service, "run_task", fake_run_task)
+
+        start_response = client.post(f"/api/tasks/{run_id}/start")
+        assert start_response.status_code == 200
+        assert start_response.json()["message"] == "Task start requested"
+        assert calls == [run_id]
+
+        task_response = client.get(f"/api/tasks/{run_id}")
+        assert task_response.status_code == 200
+        assert task_response.json()["status"] == "pending"
+
+
 def test_openai_chat_executor_uses_runtime_pricing_when_catalog_missing(tmp_path, monkeypatch):
     db_path = tmp_path / "pricing.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))

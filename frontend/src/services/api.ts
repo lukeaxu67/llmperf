@@ -240,6 +240,9 @@ export const taskApi = {
   cancel: (runId: string) =>
     api.post(`/tasks/${runId}/cancel`),
 
+  start: (runId: string) =>
+    api.post(`/tasks/${runId}/start`),
+
   pause: (runId: string) =>
     api.post(`/tasks/${runId}/pause`),
 
