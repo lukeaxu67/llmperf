@@ -382,6 +382,15 @@ class Storage:
                 run.error_message = error_message
             session.commit()
 
+    def update_run_info(self, run_id: str, info: str) -> bool:
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if not run:
+                return False
+            run.info = info
+            session.commit()
+            return True
+
     def mark_run_completed(self, run_id: str, completed_at: Optional[int] = None) -> None:
         """Record run completion timestamp."""
         with self.db.session() as session:

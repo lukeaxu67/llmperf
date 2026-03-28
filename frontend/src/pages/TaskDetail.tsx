@@ -7,6 +7,8 @@ import {
   Col,
   Descriptions,
   Empty,
+  Input,
+  Modal,
   Progress,
   Row,
   Select,
@@ -21,6 +23,7 @@ import {
 import {
   ArrowLeftOutlined,
   DownloadOutlined,
+  EditOutlined,
   FileTextOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -83,6 +86,9 @@ export default function TaskDetail() {
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [report, setReport] = useState<DetailedReport | null>(null)
   const [baselineId, setBaselineId] = useState<string>()
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [renaming, setRenaming] = useState(false)
 
   const loadTaskBundle = async (runId: string, silent = false) => {
     if (!silent) {
@@ -227,6 +233,28 @@ export default function TaskDetail() {
     }
   }
 
+  const handleRename = async () => {
+    if (!id) return
+    const nextName = renameValue.trim()
+    if (!nextName) {
+      message.error('任务名称不能为空')
+      return
+    }
+    try {
+      setRenaming(true)
+      await taskApi.rename(id, nextName)
+      setTask((prev) => (prev ? { ...prev, task_name: nextName } : prev))
+      setReport((prev) => (prev ? { ...prev, task_name: nextName } : prev))
+      setRenameOpen(false)
+      message.success('任务名称已更新')
+      loadTaskBundle(id, true)
+    } catch (error: any) {
+      message.error(error.message || '更新任务名称失败')
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   const executorItems = useMemo<ExecutorProgress[]>(
     () => report?.executor_summary || progress?.executors || [],
     [progress, report],
@@ -254,6 +282,7 @@ export default function TaskDetail() {
     key: item.id,
     ...item,
   }))
+  const canRenameTask = task.status !== 'running' && task.status !== 'paused'
 
   return (
     <div>
@@ -296,7 +325,22 @@ export default function TaskDetail() {
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[24, 16]} align="middle">
           <Col span={16}>
-            <Title level={4} style={{ margin: 0 }}>{task.task_name || '未命名任务'}</Title>
+            <Space align="center" size="small" wrap>
+              <Title level={4} style={{ margin: 0 }}>{task.task_name || '未命名任务'}</Title>
+              {canRenameTask && (
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    setRenameValue(task.task_name || '')
+                    setRenameOpen(true)
+                  }}
+                >
+                  修改名称
+                </Button>
+              )}
+            </Space>
             <Space size="middle" style={{ marginTop: 8 }} wrap>
               <StatusTag status={task.status as any} />
               <Text type="secondary">Run ID: {task.run_id}</Text>
@@ -320,6 +364,30 @@ export default function TaskDetail() {
           </Col>
         </Row>
       </Card>
+
+      <Modal
+        title="修改任务名称"
+        open={renameOpen}
+        onOk={handleRename}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={renaming}
+        onCancel={() => {
+          if (!renaming) {
+            setRenameOpen(false)
+          }
+        }}
+      >
+        <Input
+          maxLength={120}
+          value={renameValue}
+          onChange={(event) => setRenameValue(event.target.value)}
+          placeholder="输入任务名称"
+          onPressEnter={() => {
+            void handleRename()
+          }}
+        />
+      </Modal>
 
       {(task.status === 'running' || task.status === 'paused' || report?.is_partial) && (
         <Alert

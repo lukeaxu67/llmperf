@@ -16,7 +16,7 @@ from llmperf.records.storage import Storage
 from llmperf.web.main import create_app
 from llmperf.web import main as web_main
 from llmperf.web.services.run_config_service import load_run_config_content
-from llmperf.web.services.task_service import TaskService
+from llmperf.web.services.task_service import TaskService, TaskStatus
 
 
 LEGACY_WEB_CONFIG = """
@@ -217,6 +217,62 @@ def test_recover_endpoint_reuses_same_run_id(tmp_path, monkeypatch):
         assert recover_response.json()["run_id"] == run_id
         assert recover_response.json()["message"] == "Task recovery started"
         assert calls == [run_id]
+
+
+def test_rename_task_updates_persisted_name(tmp_path, monkeypatch):
+    db_path = tmp_path / "rename.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": LEGACY_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        rename_response = client.put(
+            f"/api/tasks/{run_id}/name",
+            json={"task_name": "Renamed Task"},
+        )
+        assert rename_response.status_code == 200
+
+        task_response = client.get(f"/api/tasks/{run_id}")
+        assert task_response.status_code == 200
+        assert task_response.json()["task_name"] == "Renamed Task"
+
+
+def test_rename_task_rejects_running_task(tmp_path, monkeypatch):
+    db_path = tmp_path / "rename-running.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": LEGACY_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        service = web_main.get_task_service()
+        task_info = service.get_task(run_id)
+        assert task_info is not None
+        task_info.status = TaskStatus.RUNNING
+
+        rename_response = client.put(
+            f"/api/tasks/{run_id}/name",
+            json={"task_name": "Should Fail"},
+        )
+        assert rename_response.status_code == 400
+        assert "cannot be changed" in rename_response.json()["detail"]
 
 
 def test_executor_resume_skips_completed_dataset_rows(tmp_path):

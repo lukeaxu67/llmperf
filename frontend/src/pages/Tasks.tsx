@@ -187,17 +187,6 @@ export default function Tasks() {
       },
     },
     {
-      title: 'Run ID',
-      dataIndex: 'run_id',
-      key: 'run_id',
-      width: 150,
-      render: (id: string) => (
-        <Typography.Text code copyable={{ text: id }} style={{ fontSize: 12 }}>
-          {id.slice(0, 8)}...
-        </Typography.Text>
-      ),
-    },
-    {
       title: '状态',
       dataIndex: 'status',
       key: 'status',

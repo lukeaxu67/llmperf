@@ -1399,6 +1399,28 @@ class TaskService:
 
         return self.rerun_task(run_id)
 
+    def rename_task(self, run_id: str, task_name: str) -> Optional[TaskInfo]:
+        normalized_name = str(task_name or "").strip()
+        if not normalized_name:
+            raise ValueError("Task name cannot be empty")
+
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                return None
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+
+        if task_info.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+            raise ValueError("Task name cannot be changed while the task is running")
+
+        if not self._storage.update_run_info(run_id, normalized_name):
+            return None
+
+        task_info.task_name = normalized_name
+        return task_info
+
     def delete_task(self, run_id: str) -> bool:
         """Delete a task.
 

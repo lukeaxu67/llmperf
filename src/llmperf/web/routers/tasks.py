@@ -54,6 +54,10 @@ class TaskRerunRequest(BaseModel):
     scheduled_at: Optional[datetime] = Field(None, description="Scheduled start time for rerun")
 
 
+class TaskRenameRequest(BaseModel):
+    task_name: str = Field(..., min_length=1, description="New task name")
+
+
 class TaskListResponse(BaseModel):
     """Response for task list."""
     tasks: List[TaskInfo]
@@ -299,6 +303,33 @@ async def get_task(run_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     return task_info
+
+
+@router.put(
+    "/{run_id}/name",
+    response_model=TaskResponse,
+    summary="Rename task",
+)
+async def rename_task(
+    run_id: str,
+    request: TaskRenameRequest = Body(...),
+):
+    service = get_service()
+    try:
+        task_info = service.rename_task(run_id, request.task_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return TaskResponse(
+        run_id=run_id,
+        status=task_info.status,
+        message="Task name updated",
+        created_at=task_info.created_at,
+        scheduled_at=task_info.scheduled_at,
+    )
 
 
 @router.get(

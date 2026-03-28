@@ -13,7 +13,7 @@ import StatCard from '@/components/StatCard'
 import StatusTag from '@/components/StatusTag'
 import { pricingApi, taskApi, Task } from '@/services/api'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 
 interface DashboardStats {
   totalTasks: number
@@ -91,12 +91,6 @@ export default function Dashboard() {
           ? <a href={`/tasks/${record.run_id}`}>{name || '未命名任务'}</a>
           : (name || '未命名任务')
       ),
-    },
-    {
-      title: 'Run ID',
-      dataIndex: 'run_id',
-      key: 'run_id',
-      render: (id: string) => <Text code copyable={{ text: id }}>{id.slice(0, 8)}...</Text>,
     },
     {
       title: '状态',

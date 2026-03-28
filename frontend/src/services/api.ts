@@ -261,6 +261,9 @@ export const taskApi = {
   rerun: (runId: string, data?: { auto_start?: boolean; scheduled_at?: string }) =>
     api.post(`/tasks/${runId}/rerun`, data),
 
+  rename: (runId: string, task_name: string) =>
+    api.put(`/tasks/${runId}/name`, { task_name }),
+
   getConfig: (runId: string) =>
     api.get<{ run_id: string; config_content: string }>(`/tasks/${runId}/config`),
 
