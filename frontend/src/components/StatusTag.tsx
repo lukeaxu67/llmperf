@@ -8,13 +8,14 @@ import {
   PauseCircleOutlined,
 } from '@ant-design/icons'
 
-type TaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
+type TaskStatus = 'scheduled' | 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 interface StatusTagProps {
   status: TaskStatus
 }
 
 const statusConfig: Record<TaskStatus, { color: string; icon: React.ReactNode; text: string }> = {
+  scheduled: { color: 'blue', icon: <ClockCircleOutlined />, text: '已定时' },
   pending: { color: 'warning', icon: <ClockCircleOutlined />, text: '等待中' },
   running: { color: 'processing', icon: <LoadingOutlined spin />, text: '运行中' },
   paused: { color: 'warning', icon: <PauseCircleOutlined />, text: '已暂停' },

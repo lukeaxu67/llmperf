@@ -50,6 +50,7 @@ export default function Dashboard() {
       ])
 
       const tasks = tasksRes.tasks || []
+      const totalTasks = tasksRes.total || tasks.length
       setRecentTasks(tasks.slice(0, 5))
 
       // Calculate stats
@@ -60,7 +61,7 @@ export default function Dashboard() {
       const runCount = costRes?.run_count || tasks.length
 
       setStats({
-        totalTasks: tasks.length,
+        totalTasks,
         runningTasks,
         completedTasks,
         failedTasks,

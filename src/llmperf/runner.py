@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from typing import Dict, Optional
 
@@ -25,10 +26,13 @@ class RunManager:
         config_path: str,
         pricing_path: Optional[str] = None,
         run_id: str | None = None,
+        register_run: bool = True,
+        cancel_event: threading.Event | None = None,
     ):
         self.config = config
         self.config_path = config_path
         self.run_id = run_id or uuid.uuid4().hex
+        self.cancel_event = cancel_event
         self.dataset = load_dataset(
             config.dataset.source.type,
             name=(config.dataset.source.name or "dataset"),
@@ -44,12 +48,15 @@ class RunManager:
         runtime = load_runtime_config()
         self.db_path = config.db_path or str(runtime.db_path)
         self.storage = Storage(self.db_path)
-        self.storage.register_run(
-            self.run_id,
-            config,
-            config_path=config_path,
-            config_content=self.config_content,
-        )
+        if register_run:
+            self.storage.register_run(
+                self.run_id,
+                config,
+                config_path=config_path,
+                config_content=self.config_content,
+                task_type="benchmark",
+                status="running",
+            )
 
     def run(self) -> str:
         rows: list[DatasetRow] = list(self.dataset)
@@ -76,6 +83,7 @@ class RunManager:
             deadline_ts=None,
             max_rows=None,
             exec_meta=exec_meta,
+            cancel_event=self.cancel_event,
         )
         manager.run_all()
 

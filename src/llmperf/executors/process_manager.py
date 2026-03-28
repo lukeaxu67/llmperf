@@ -16,6 +16,10 @@ from .base import create_executor
 logger = logging.getLogger(__name__)
 
 
+class TaskCancelledError(RuntimeError):
+    """Raised when a task is cancelled during multi-process execution."""
+
+
 def _run_executor_in_subprocess(
     cfg_data: dict,
     run_id: str,
@@ -73,6 +77,7 @@ class ProcessManager:
     deadline_ts: Optional[float] = None
     max_rows: Optional[int] = None
     exec_meta: Optional[Dict[str, object]] = None
+    cancel_event: object | None = None
 
     def _mp_config(self) -> MultiprocessConfig:
         return self.config.multiprocess or MultiprocessConfig(per_executor=True)
@@ -107,6 +112,9 @@ class ProcessManager:
         processes: List[mp.Process] = []
         try:
             while pending:
+                if self.cancel_event is not None and self.cancel_event.is_set():
+                    raise TaskCancelledError(f"Run {self.run_id} cancelled before starting next executor batch")
+
                 ready_ids = [
                     exec_id
                     for exec_id, cfg in pending.items()
@@ -143,14 +151,37 @@ class ProcessManager:
                     processes.append(p)
                     p.start()
 
+                while any(p.is_alive() for p in processes):
+                    for p in processes:
+                        p.join(timeout=0.2)
+                    if self.cancel_event is not None and self.cancel_event.is_set():
+                        for p in processes:
+                            try:
+                                if p.is_alive():
+                                    p.terminate()
+                            except Exception:
+                                continue
+                        for p in processes:
+                            try:
+                                p.join(timeout=2)
+                            except Exception:
+                                continue
+                        raise TaskCancelledError(f"Run {self.run_id} cancelled during executor batch")
+
+                failed_processes: List[str] = []
                 for p in processes:
-                    p.join()
                     if p.exitcode not in (0, None):
                         logger.error(
                             "Executor process %s exited with code %s",
                             p.name,
                             p.exitcode,
                         )
+                        failed_processes.append(f"{p.name}:{p.exitcode}")
+
+                if failed_processes:
+                    raise RuntimeError(
+                        "Executor subprocesses failed: " + ", ".join(failed_processes)
+                    )
 
                 completed.update(batch_ids)
         except KeyboardInterrupt:

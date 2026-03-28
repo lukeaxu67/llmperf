@@ -25,6 +25,7 @@ import {
   RedoOutlined,
   FileTextOutlined,
   DollarOutlined,
+  CopyOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import StatusTag from '@/components/StatusTag'
@@ -53,18 +54,19 @@ export default function Tasks() {
     fetchTasks()
   }, [page, pageSize, statusFilter])
 
-  // Poll for running tasks progress
   useEffect(() => {
-    const runningTasks = tasks.filter(t => t.status === 'running')
-    if (runningTasks.length === 0) return
+    const activeTasks = tasks.filter((t) => t.status === 'running' || t.status === 'paused')
+    if (activeTasks.length === 0) {
+      return
+    }
 
     const interval = setInterval(async () => {
-      for (const task of runningTasks) {
+      for (const task of activeTasks) {
         try {
           const progress = await taskApi.getProgress(task.run_id) as any
-          setProgressMap(prev => ({ ...prev, [task.run_id]: progress }))
-        } catch (e) {
-          // Ignore
+          setProgressMap((prev) => ({ ...prev, [task.run_id]: progress }))
+        } catch {
+          // ignore polling errors
         }
       }
     }, 3000)
@@ -106,10 +108,29 @@ export default function Tasks() {
   const handleRetry = async (runId: string) => {
     try {
       await taskApi.retry(runId)
-      message.success('任务已重新启动')
+      message.success('失败任务已重新提交')
       fetchTasks()
     } catch (error: any) {
       message.error(error.message || '重试失败')
+    }
+  }
+
+  const handleRerun = async (runId: string) => {
+    try {
+      await taskApi.rerun(runId, { auto_start: true })
+      message.success('已按原配置重新执行')
+      fetchTasks()
+    } catch (error: any) {
+      message.error(error.message || '重新执行失败')
+    }
+  }
+
+  const handleReuseConfig = async (runId: string) => {
+    try {
+      const response = await taskApi.getConfig(runId) as any
+      navigate('/tasks/create', { state: { configContent: response.config_content } })
+    } catch (error: any) {
+      message.error(error.message || '载入历史配置失败')
     }
   }
 
@@ -131,12 +152,8 @@ export default function Tasks() {
       ellipsis: true,
       render: (name: string, record: TaskWithCost) => {
         const displayName = name || '未命名任务'
-        if (record.status === 'completed') {
-          return (
-            <a onClick={() => navigate(`/tasks/${record.run_id}`)}>
-              {displayName}
-            </a>
-          )
+        if (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') {
+          return <a onClick={() => navigate(`/tasks/${record.run_id}`)}>{displayName}</a>
         }
         return displayName
       },
@@ -175,20 +192,26 @@ export default function Tasks() {
       title: '费用',
       dataIndex: 'total_cost',
       key: 'total_cost',
-      width: 100,
+      width: 120,
       render: (cost: number, record: TaskWithCost) => {
-        if (record.status !== 'completed' || !cost) return '-'
-        return <Tag color="red">¥{cost.toFixed(4)}</Tag>
+        if (typeof cost !== 'number' || cost <= 0) {
+          return '-'
+        }
+        return <Tag color="red">¥{cost.toFixed(4)} {record.currency || 'CNY'}</Tag>
       },
     },
     {
       title: '进度',
       key: 'progress',
-      width: 200,
-      render: (_: any, record: TaskWithCost) => {
-        if (record.status !== 'running') return '-'
+      width: 220,
+      render: (_: unknown, record: TaskWithCost) => {
+        if (record.status !== 'running' && record.status !== 'paused') {
+          return '-'
+        }
         const progress = progressMap[record.run_id]
-        if (!progress) return <Tag>加载中...</Tag>
+        if (!progress) {
+          return <Tag>加载中...</Tag>
+        }
         return (
           <TaskProgressBar
             percent={progress.progress_percent}
@@ -201,17 +224,24 @@ export default function Tasks() {
       },
     },
     {
+      title: '计划时间',
+      dataIndex: 'scheduled_at',
+      key: 'scheduled_at',
+      width: 180,
+      render: (time?: string) => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '-'),
+    },
+    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 150,
-      render: (time: string) => time ? dayjs(time).format('MM-DD HH:mm') : '-',
+      width: 160,
+      render: (time: string) => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '-'),
     },
     {
       title: '操作',
       key: 'actions',
-      width: 120,
-      render: (_: any, record: TaskWithCost) => (
+      width: 220,
+      render: (_: unknown, record: TaskWithCost) => (
         <Space size="small">
           <Tooltip title="查看详情">
             <Button
@@ -221,18 +251,26 @@ export default function Tasks() {
               onClick={() => navigate(`/tasks/${record.run_id}`)}
             />
           </Tooltip>
-          {record.status === 'running' && (
-            <Popconfirm
-              title="确定要取消此任务吗？"
-              onConfirm={() => handleCancel(record.run_id)}
-            >
-              <Tooltip title="取消任务">
-                <Button type="text" size="small" danger icon={<StopOutlined />} />
-              </Tooltip>
-            </Popconfirm>
+          <Tooltip title="复用配置">
+            <Button
+              type="text"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => handleReuseConfig(record.run_id)}
+            />
+          </Tooltip>
+          {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
+            <Tooltip title="立即重跑">
+              <Button
+                type="text"
+                size="small"
+                icon={<RedoOutlined />}
+                onClick={() => handleRerun(record.run_id)}
+              />
+            </Tooltip>
           )}
           {record.status === 'failed' && (
-            <Tooltip title="重试任务">
+            <Tooltip title="按失败任务重试接口重提">
               <Button
                 type="text"
                 size="small"
@@ -241,11 +279,15 @@ export default function Tasks() {
               />
             </Tooltip>
           )}
-          {record.status !== 'running' && (
-            <Popconfirm
-              title="确定要删除此任务吗？"
-              onConfirm={() => handleDelete(record.run_id)}
-            >
+          {(record.status === 'running' || record.status === 'paused' || record.status === 'scheduled' || record.status === 'pending') && (
+            <Popconfirm title="确定要取消此任务吗？" onConfirm={() => handleCancel(record.run_id)}>
+              <Tooltip title="取消任务">
+                <Button type="text" size="small" danger icon={<StopOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
+          {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
+            <Popconfirm title="确定要删除此任务吗？" onConfirm={() => handleDelete(record.run_id)}>
               <Tooltip title="删除任务">
                 <Button type="text" size="small" danger icon={<DeleteOutlined />} />
               </Tooltip>
@@ -265,7 +307,6 @@ export default function Tasks() {
         </Button>
       </div>
 
-      {/* Cost Summary */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={8}>
           <Card size="small">
@@ -281,11 +322,7 @@ export default function Tasks() {
         </Col>
         <Col span={8}>
           <Card size="small">
-            <Statistic
-              title="任务总数"
-              value={total}
-              suffix="个"
-            />
+            <Statistic title="任务总数" value={total} suffix="个" />
           </Card>
         </Col>
         <Col span={8}>
@@ -305,12 +342,14 @@ export default function Tasks() {
           <Select
             placeholder="状态筛选"
             allowClear
-            style={{ width: 150 }}
+            style={{ width: 160 }}
             value={statusFilter}
             onChange={setStatusFilter}
             options={[
+              { value: 'scheduled', label: '已定时' },
               { value: 'pending', label: '等待中' },
               { value: 'running', label: '运行中' },
+              { value: 'paused', label: '已暂停' },
               { value: 'completed', label: '已完成' },
               { value: 'failed', label: '失败' },
               { value: 'cancelled', label: '已取消' },
@@ -331,10 +370,10 @@ export default function Tasks() {
             pageSize,
             total,
             showSizeChanger: true,
-            showTotal: (t) => `共 ${t} 条`,
-            onChange: (p, ps) => {
-              setPage(p)
-              setPageSize(ps)
+            showTotal: (count) => `共 ${count} 条`,
+            onChange: (nextPage, nextPageSize) => {
+              setPage(nextPage)
+              setPageSize(nextPageSize)
             },
           }}
           locale={{

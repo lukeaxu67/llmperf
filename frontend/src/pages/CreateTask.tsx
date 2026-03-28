@@ -1,10 +1,6 @@
-/**
- * Create Task Page
- * Step-by-step task creation wizard
- */
-
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import dayjs, { Dayjs } from 'dayjs'
 import {
   Card,
   Button,
@@ -17,6 +13,7 @@ import {
   Radio,
   Row,
   Col,
+  DatePicker,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -28,6 +25,7 @@ import {
   BugOutlined,
   ExperimentOutlined,
   MonitorOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons'
 import useTaskFormStore from '@/stores/taskFormStore'
 import { taskApi } from '@/services/api'
@@ -49,29 +47,38 @@ const steps = [
   },
   {
     title: '执行设置',
-    description: '配置执行轮数和变异',
+    description: '配置轮数和变异方式',
     icon: <SettingOutlined />,
   },
   {
     title: '执行器',
-    description: '配置执行器参数',
+    description: '配置模型和接口参数',
     icon: <ApiOutlined />,
   },
   {
-    title: '确认',
-    description: '预览并提交',
+    title: '确认提交',
+    description: '预览 YAML 并执行',
     icon: <CheckCircleOutlined />,
   },
 ]
 
+type StartMode = 'now' | 'scheduled'
+
+interface LocationState {
+  configContent?: string
+}
+
 export default function CreateTask() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const locationState = (location.state || {}) as LocationState
   const {
     currentStep,
     setStep,
     nextStep,
     prevStep,
     generateYamlContent,
+    loadFromYaml,
     reset,
     taskType,
     setTaskType,
@@ -81,8 +88,24 @@ export default function CreateTask() {
   const [yamlValid, setYamlValid] = useState(false)
   const [testRunOpen, setTestRunOpen] = useState(false)
   const [createdTaskId, setCreatedTaskId] = useState<string | null>(null)
+  const [createdMessage, setCreatedMessage] = useState('任务创建成功')
+  const [startMode, setStartMode] = useState<StartMode>('now')
+  const [scheduledAt, setScheduledAt] = useState<Dayjs | null>(null)
 
-  // Validate current step before proceeding
+  useEffect(() => {
+    if (!locationState.configContent) {
+      return
+    }
+    try {
+      loadFromYaml(locationState.configContent)
+      setStep(0)
+      message.success('已载入历史任务配置')
+      navigate(location.pathname, { replace: true, state: null })
+    } catch (error: any) {
+      message.error(error?.message || '载入历史配置失败')
+    }
+  }, [loadFromYaml, location.pathname, locationState.configContent, navigate, setStep])
+
   const canProceed = () => {
     const { selectedDataset, executors } = useTaskFormStore.getState()
 
@@ -93,24 +116,28 @@ export default function CreateTask() {
           return false
         }
         return true
-
       case 1:
         return true
-
       case 2:
         if (executors.length === 0) {
           message.warning('请至少添加一个执行器')
           return false
         }
         return true
-
       case 3:
         if (!yamlValid) {
           message.warning('请先验证 YAML 配置')
           return false
         }
+        if (startMode === 'scheduled' && !scheduledAt) {
+          message.warning('请选择定时执行时间')
+          return false
+        }
+        if (startMode === 'scheduled' && scheduledAt && scheduledAt.isBefore(dayjs())) {
+          message.warning('定时执行时间必须晚于当前时间')
+          return false
+        }
         return true
-
       default:
         return true
     }
@@ -131,14 +158,17 @@ export default function CreateTask() {
     setSubmitting(true)
 
     try {
+      const isScheduled = startMode === 'scheduled' && scheduledAt
       const response = await taskApi.create({
         config_content: yamlContent,
-        auto_start: true,
+        auto_start: !isScheduled,
         task_type: taskType,
+        scheduled_at: isScheduled ? scheduledAt.toISOString() : undefined,
       }) as any
 
       setCreatedTaskId(response.run_id)
-      message.success('任务创建成功')
+      setCreatedMessage(isScheduled ? '任务已创建并加入定时执行' : '任务已创建并开始执行')
+      message.success(isScheduled ? '定时任务创建成功' : '任务创建成功')
     } catch (error: any) {
       message.error(error.message || '创建任务失败')
     } finally {
@@ -155,9 +185,11 @@ export default function CreateTask() {
   const handleCreateAnother = () => {
     reset()
     setCreatedTaskId(null)
+    setCreatedMessage('任务创建成功')
+    setStartMode('now')
+    setScheduledAt(null)
   }
 
-  // Show success result after task creation
   if (createdTaskId) {
     return (
       <div>
@@ -169,14 +201,14 @@ export default function CreateTask() {
 
         <Result
           status="success"
-          title="任务创建成功"
+          title={createdMessage}
           subTitle={`任务 ID: ${createdTaskId}`}
           extra={[
             <Button type="primary" key="view" onClick={handleViewTask}>
               查看任务
             </Button>,
             <Button key="another" onClick={handleCreateAnother}>
-              创建新任务
+              再建一个
             </Button>,
             <Button key="list" onClick={() => navigate('/tasks')}>
               返回列表
@@ -191,36 +223,51 @@ export default function CreateTask() {
     switch (currentStep) {
       case 0:
         return <DatasetSelector />
-
       case 1:
         return <ExecutionSettings />
-
       case 2:
         return <ExecutorList />
-
       case 3:
         return (
           <div>
             <YamlPreview onValidChange={setYamlValid} />
             <Card style={{ marginTop: 16 }}>
-              <Space>
-                <Button
-                  icon={<BugOutlined />}
-                  onClick={() => setTestRunOpen(true)}
-                >
-                  测试运行
-                </Button>
-                <Alert
-                  message="测试运行会使用第一条数据，对所有执行器各执行一次，结果不会保存"
-                  type="info"
-                  showIcon
-                  style={{ display: 'inline-flex' }}
-                />
+              <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                <Space>
+                  <Button icon={<BugOutlined />} onClick={() => setTestRunOpen(true)}>
+                    测试运行
+                  </Button>
+                  <Alert
+                    message="测试运行会使用第 1 条数据，对所有执行器各执行 1 次，结果不会落库。"
+                    type="info"
+                    showIcon
+                    style={{ display: 'inline-flex' }}
+                  />
+                </Space>
+
+                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                  <Text strong>启动方式</Text>
+                  <Radio.Group value={startMode} onChange={(e) => setStartMode(e.target.value)}>
+                    <Space direction="vertical">
+                      <Radio value="now">立即执行</Radio>
+                      <Radio value="scheduled">定时执行</Radio>
+                    </Space>
+                  </Radio.Group>
+                  {startMode === 'scheduled' && (
+                    <DatePicker
+                      showTime
+                      style={{ width: 320 }}
+                      placeholder="选择执行时间"
+                      value={scheduledAt}
+                      onChange={setScheduledAt}
+                      disabledDate={(current) => !!current && current.endOf('day').isBefore(dayjs().startOf('day'))}
+                    />
+                  )}
+                </Space>
               </Space>
             </Card>
           </div>
         )
-
       default:
         return null
     }
@@ -228,7 +275,6 @@ export default function CreateTask() {
 
   return (
     <div>
-      {/* Header */}
       <div style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
           返回列表
@@ -237,17 +283,16 @@ export default function CreateTask() {
 
       <Title level={4}>创建任务</Title>
       <Paragraph type="secondary">
-        通过分步向导创建基准测试任务
+        按步骤配置数据集、执行参数和执行器，最后选择立即执行或定时执行。
       </Paragraph>
 
-      {/* Task Type Selection */}
       <Card style={{ marginBottom: 24 }}>
         <Row gutter={[16, 16]} align="middle">
           <Col>
             <Space direction="vertical" size={0}>
               <Text strong>任务类型</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                选择任务类型以确定测试策略
+                选择任务类型以决定任务用途。
               </Text>
             </Space>
           </Col>
@@ -276,8 +321,8 @@ export default function CreateTask() {
             <Alert
               message={
                 taskType === 'benchmark'
-                  ? '基准测试：对选定模型进行一次性性能测试'
-                  : '持续监控：定期监控模型性能，适用于长期跟踪'
+                  ? '基准测试会立即或按计划执行一轮完整评测。'
+                  : '持续监控用于周期性地观察模型表现变化。'
               }
               type="info"
               showIcon
@@ -286,23 +331,15 @@ export default function CreateTask() {
         </Row>
       </Card>
 
-      {/* Steps */}
       <Card style={{ marginBottom: 24 }}>
         <Steps current={currentStep} items={steps} onChange={setStep} />
       </Card>
 
-      {/* Step Content */}
-      <div style={{ marginBottom: 24 }}>
-        {renderStepContent()}
-      </div>
+      <div style={{ marginBottom: 24 }}>{renderStepContent()}</div>
 
-      {/* Navigation */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Button
-            disabled={currentStep === 0}
-            onClick={prevStep}
-          >
+          <Button disabled={currentStep === 0} onClick={prevStep}>
             上一步
           </Button>
 
@@ -314,18 +351,17 @@ export default function CreateTask() {
             ) : (
               <Button
                 type="primary"
-                icon={<PlayCircleOutlined />}
+                icon={startMode === 'scheduled' ? <ClockCircleOutlined /> : <PlayCircleOutlined />}
                 loading={submitting}
                 onClick={handleSubmit}
               >
-                创建并运行
+                {startMode === 'scheduled' ? '创建并定时' : '创建并执行'}
               </Button>
             )}
           </Space>
         </Space>
       </Card>
 
-      {/* Test Run Modal */}
       <TestRunModal
         open={testRunOpen}
         yamlContent={generateYamlContent()}

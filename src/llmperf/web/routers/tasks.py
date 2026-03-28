@@ -31,6 +31,8 @@ class TaskCreateRequest(BaseModel):
     config_content: Optional[str] = Field(None, description="YAML config content")
     run_id: Optional[str] = Field(None, description="Optional run ID")
     auto_start: bool = Field(True, description="Auto start task after creation")
+    task_type: str = Field("benchmark", description="Task type")
+    scheduled_at: Optional[datetime] = Field(None, description="Scheduled start time")
 
 
 class TaskResponse(BaseModel):
@@ -39,6 +41,17 @@ class TaskResponse(BaseModel):
     status: TaskStatus
     message: str = ""
     created_at: Optional[datetime] = None
+    scheduled_at: Optional[datetime] = None
+
+
+class TaskConfigResponse(BaseModel):
+    run_id: str
+    config_content: str
+
+
+class TaskRerunRequest(BaseModel):
+    auto_start: bool = Field(True, description="Auto start rerun after creation")
+    scheduled_at: Optional[datetime] = Field(None, description="Scheduled start time for rerun")
 
 
 class TaskListResponse(BaseModel):
@@ -221,20 +234,30 @@ async def create_task(
             config_path=request.config_path,
             config_content=request.config_content,
             run_id=request.run_id,
+            task_type=request.task_type,
+            scheduled_at=request.scheduled_at,
         )
 
-        # Start task in background if auto_start
-        if request.auto_start:
+        if task_info.status == TaskStatus.SCHEDULED and task_info.scheduled_at:
+            service.schedule_task(task_info.run_id, task_info.scheduled_at)
+        elif request.auto_start:
             background_tasks.add_task(
                 service.run_task,
                 task_info.run_id,
             )
 
+        message = "Task created"
+        if task_info.status == TaskStatus.SCHEDULED:
+            message = "Task created and scheduled"
+        elif request.auto_start:
+            message = "Task created and started"
+
         return TaskResponse(
             run_id=task_info.run_id,
             status=task_info.status,
-            message="Task created" + (" and started" if request.auto_start else ""),
+            message=message,
             created_at=task_info.created_at,
+            scheduled_at=task_info.scheduled_at,
         )
 
     except Exception as e:
@@ -276,6 +299,19 @@ async def get_task(run_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     return task_info
+
+
+@router.get(
+    "/{run_id}/config",
+    response_model=TaskConfigResponse,
+    summary="Get task config snapshot",
+)
+async def get_task_config(run_id: str):
+    service = get_service()
+    config_content = service.get_task_config_content(run_id)
+    if not config_content:
+        raise HTTPException(status_code=404, detail="Task config not found")
+    return TaskConfigResponse(run_id=run_id, config_content=config_content)
 
 
 @router.get(
@@ -524,6 +560,42 @@ async def retry_task(
         status=task_info.status,
         message="Task retry started",
         created_at=task_info.created_at,
+        scheduled_at=task_info.scheduled_at,
+    )
+
+
+@router.post(
+    "/{run_id}/rerun",
+    response_model=TaskResponse,
+    summary="Rerun an existing task with the same config",
+)
+async def rerun_task(
+    run_id: str,
+    request: Optional[TaskRerunRequest] = Body(default=None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    service = get_service()
+    rerun_request = request or TaskRerunRequest()
+    task_info = service.rerun_task(run_id, scheduled_at=rerun_request.scheduled_at)
+
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task config not found")
+
+    if task_info.status == TaskStatus.SCHEDULED and task_info.scheduled_at:
+        service.schedule_task(task_info.run_id, task_info.scheduled_at)
+        message = "Task rerun created and scheduled"
+    elif rerun_request.auto_start:
+        background_tasks.add_task(service.run_task, task_info.run_id)
+        message = "Task rerun started"
+    else:
+        message = "Task rerun created"
+
+    return TaskResponse(
+        run_id=task_info.run_id,
+        status=task_info.status,
+        message=message,
+        created_at=task_info.created_at,
+        scheduled_at=task_info.scheduled_at,
     )
 
 

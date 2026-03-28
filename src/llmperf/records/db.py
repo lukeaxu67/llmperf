@@ -18,11 +18,15 @@ class RunORM(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     task_type: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending")
     info: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[int] = mapped_column(Integer, default=lambda: int(time.time()))
+    started_at: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_at: Mapped[int] = mapped_column(Integer, default=0)
     config_path: Mapped[str] = mapped_column(Text, default="")
     config_content: Mapped[str] = mapped_column(Text, default="")
     completed_at: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str] = mapped_column(Text, default="")
     # Aggregated cost for this run
     total_cost: Mapped[float] = mapped_column(Float, default=0.0)
     currency: Mapped[str] = mapped_column(String, default="CNY")
@@ -212,9 +216,25 @@ class Database:
                     conn.execute(
                         text("ALTER TABLE runs ADD COLUMN config_content TEXT DEFAULT ''")
                     )
+                if "status" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN status TEXT DEFAULT 'pending'")
+                    )
+                if "started_at" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN started_at INTEGER DEFAULT 0")
+                    )
+                if "scheduled_at" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN scheduled_at INTEGER DEFAULT 0")
+                    )
                 if "completed_at" not in existing:
                     conn.execute(
                         text("ALTER TABLE runs ADD COLUMN completed_at INTEGER DEFAULT 0")
+                    )
+                if "error_message" not in existing:
+                    conn.execute(
+                        text("ALTER TABLE runs ADD COLUMN error_message TEXT DEFAULT ''")
                     )
                 if "total_cost" not in existing:
                     conn.execute(

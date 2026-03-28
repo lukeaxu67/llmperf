@@ -13,10 +13,12 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from llmperf.config.loader import load_config
-from llmperf.config.models import ExecutorConfig, RunConfig
+from llmperf.config.models import ExecutorConfig, PricingEntry, RunConfig
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
 from llmperf.runner import RunManager
+from llmperf.executors.process_manager import TaskCancelledError
+import yaml
 from .run_config_service import load_run_config_content, normalize_run_config
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ def _percentile(values: List[float], percentile: float) -> float:
 
 class TaskStatus(str, Enum):
     """Status of a task."""
+    SCHEDULED = "scheduled"
     PENDING = "pending"
     RUNNING = "running"
     PAUSED = "paused"
@@ -79,7 +82,9 @@ class TaskInfo:
     status: TaskStatus
     config_path: Optional[str] = None
     task_name: str = ""
+    task_type: str = "benchmark"
     created_at: datetime = field(default_factory=datetime.now)
+    scheduled_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     error_message: Optional[str] = None
@@ -102,24 +107,133 @@ class TaskService:
         self._cancel_events: Dict[str, threading.Event] = {}
         self._pause_events: Dict[str, threading.Event] = {}  # Events for pause signaling
         self._resume_events: Dict[str, threading.Event] = {}  # Events for resume signaling
+        self._scheduled_timers: Dict[str, threading.Timer] = {}
         self._config_contents: Dict[str, str] = {}  # Store config content for tasks
         self._lock = threading.Lock()
 
         runtime = load_runtime_config()
         self._db_path = str(runtime.db_path)
         self._storage = Storage(self._db_path)
+        self._restore_scheduled_tasks()
+
+    def _restore_scheduled_tasks(self) -> None:
+        try:
+            scheduled_runs = self._storage.list_runs(limit=1000, status=TaskStatus.SCHEDULED.value)
+        except Exception as exc:
+            logger.warning("Failed to restore scheduled tasks: %s", exc)
+            return
+
+        for run in scheduled_runs:
+            task_info = self._build_task_info_from_snapshot(run)
+            if not task_info.run_id:
+                continue
+            self._tasks[task_info.run_id] = task_info
+            self._progress.setdefault(
+                task_info.run_id,
+                TaskProgress(run_id=task_info.run_id, status=task_info.status),
+            )
+            config_content = run.get("config_content") or ""
+            if config_content:
+                self._config_contents[task_info.run_id] = config_content
+
+            if task_info.scheduled_at and task_info.scheduled_at > datetime.now():
+                self.schedule_task(task_info.run_id, task_info.scheduled_at)
+            else:
+                threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
 
     def _load_run_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self._storage.get_run(run_id)
 
+    @staticmethod
+    def _task_status_from_value(value: Any) -> TaskStatus:
+        try:
+            return TaskStatus(str(value))
+        except Exception:
+            return TaskStatus.PENDING
+
+    @staticmethod
+    def _normalize_datetime(value: Optional[datetime]) -> Optional[datetime]:
+        if value is None:
+            return None
+        if value.tzinfo is not None:
+            return value.astimezone().replace(tzinfo=None)
+        return value
+
+    @staticmethod
+    def _executor_pricing_provider(executor: ExecutorConfig) -> str:
+        provider_name = executor.param.get("provider_name") if isinstance(executor.param, dict) else None
+        return str(provider_name or executor.type or "").strip().lower()
+
+    def _inject_pricing_snapshot(self, config: RunConfig) -> RunConfig:
+        entries_by_key: Dict[tuple[str, str], PricingEntry] = {
+            (str(entry.provider).strip().lower(), str(entry.model).strip().lower()): entry
+            for entry in config.pricing
+        }
+        pricing_timestamp = int(time.time())
+        for executor in config.executors:
+            provider = self._executor_pricing_provider(executor)
+            model = str(executor.model or "").strip()
+            if not provider or not model:
+                continue
+            key = (provider, model.lower())
+            if key in entries_by_key:
+                continue
+            price_record = self._storage.get_pricing_at_time(
+                provider=provider,
+                model=model,
+                timestamp=pricing_timestamp,
+            )
+            if not price_record:
+                continue
+            cache_input_discount = (
+                max(price_record.cache_read_price, 0.0) / price_record.input_price
+                if price_record.input_price > 0
+                else 0.0
+            )
+            entries_by_key[key] = PricingEntry(
+                provider=provider,
+                model=model,
+                unit="per_1m",
+                input_price=price_record.input_price,
+                output_price=price_record.output_price,
+                cache_input_discount=min(max(cache_input_discount, 0.0), 1.0),
+                cache_output_discount=0.0,
+                currency="CNY",
+            )
+
+        config.pricing = list(entries_by_key.values())
+        return config
+
+    def _normalize_and_snapshot_config_content(self, config: RunConfig) -> str:
+        self._inject_pricing_snapshot(config)
+        return yaml.safe_dump(
+            config.model_dump(exclude_none=True),
+            allow_unicode=True,
+            sort_keys=False,
+        )
+
+    def _build_task_info_from_snapshot(self, run: Dict[str, Any]) -> TaskInfo:
+        return TaskInfo(
+            run_id=str(run.get("run_id") or ""),
+            status=self._task_status_from_value(run.get("status")),
+            config_path=run.get("config_path"),
+            task_name=run.get("info", ""),
+            task_type=run.get("task_type", "benchmark"),
+            created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
+            scheduled_at=datetime.fromtimestamp(run.get("scheduled_at", 0)) if run.get("scheduled_at") else None,
+            started_at=datetime.fromtimestamp(run.get("started_at", 0)) if run.get("started_at") else None,
+            completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
+            error_message=run.get("error_message") or None,
+        )
+
     def _load_run_config(self, run_id: str) -> Optional[RunConfig]:
         task_info = self._tasks.get(run_id)
         try:
-            if task_info and task_info.config_path:
-                return normalize_run_config(load_config(task_info.config_path))
             if run_id in self._config_contents:
                 config, _ = load_run_config_content(self._config_contents[run_id])
                 return config
+            if task_info and task_info.config_path:
+                return normalize_run_config(load_config(task_info.config_path))
             run_snapshot = self._load_run_snapshot(run_id)
             if not run_snapshot:
                 return None
@@ -449,6 +563,8 @@ class TaskService:
         config_path: Optional[str] = None,
         config_content: Optional[str] = None,
         run_id: Optional[str] = None,
+        task_type: str = "benchmark",
+        scheduled_at: Optional[datetime] = None,
     ) -> TaskInfo:
         """Create a new task.
 
@@ -466,28 +582,38 @@ class TaskService:
         # Generate run ID if not provided
         if not run_id:
             run_id = uuid.uuid4().hex
+        scheduled_at = self._normalize_datetime(scheduled_at)
 
         # Load configuration
         if config_path:
             config = normalize_run_config(load_config(config_path))
-            normalized_config_content = None
+            normalized_config_content = self._normalize_and_snapshot_config_content(config)
         elif config_content:
-            config, normalized_config_content = load_run_config_content(config_content)
+            config, _ = load_run_config_content(config_content)
+            normalized_config_content = self._normalize_and_snapshot_config_content(config)
         else:
             raise ValueError("Either config_path or config_content must be provided")
+
+        initial_status = (
+            TaskStatus.SCHEDULED
+            if scheduled_at and scheduled_at > datetime.now()
+            else TaskStatus.PENDING
+        )
 
         # Create task info
         task_info = TaskInfo(
             run_id=run_id,
-            status=TaskStatus.PENDING,
+            status=initial_status,
             config_path=config_path,
             task_name=config.info or "Untitled Task",
+            task_type=task_type,
+            scheduled_at=scheduled_at,
         )
 
         # Create progress tracker
         progress = TaskProgress(
             run_id=run_id,
-            status=TaskStatus.PENDING,
+            status=initial_status,
         )
 
         with self._lock:
@@ -496,7 +622,79 @@ class TaskService:
             if normalized_config_content:
                 self._config_contents[run_id] = normalized_config_content
 
+        self._storage.register_run(
+            run_id,
+            config,
+            config_path=config_path or "",
+            config_content=normalized_config_content or "",
+            task_type=task_type,
+            status=initial_status.value,
+            scheduled_at=int(scheduled_at.timestamp()) if scheduled_at else 0,
+        )
+
         return task_info
+
+    def schedule_task(self, run_id: str, scheduled_at: datetime) -> bool:
+        scheduled_at = self._normalize_datetime(scheduled_at)
+        if scheduled_at is None:
+            return False
+        task_info = self._tasks.get(run_id)
+        if not task_info:
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                return False
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+
+        delay_seconds = max((scheduled_at - datetime.now()).total_seconds(), 0.0)
+        existing_timer = self._scheduled_timers.pop(run_id, None)
+        if existing_timer:
+            existing_timer.cancel()
+
+        task_info.status = TaskStatus.SCHEDULED
+        task_info.scheduled_at = scheduled_at
+
+        progress = self._progress.get(run_id)
+        if progress:
+            progress.status = TaskStatus.SCHEDULED
+
+        self._storage.update_run_status(
+            run_id,
+            status=TaskStatus.SCHEDULED.value,
+            scheduled_at=int(scheduled_at.timestamp()),
+            error_message="",
+        )
+
+        timer = threading.Timer(delay_seconds, self.run_task, args=(run_id,))
+        timer.daemon = True
+        self._scheduled_timers[run_id] = timer
+        timer.start()
+        return True
+
+    def get_task_config_content(self, run_id: str) -> Optional[str]:
+        if run_id in self._config_contents:
+            return self._config_contents[run_id]
+        snapshot = self._load_run_snapshot(run_id)
+        if snapshot:
+            content = snapshot.get("config_content") or ""
+            return content or None
+        return None
+
+    def rerun_task(
+        self,
+        source_run_id: str,
+        *,
+        scheduled_at: Optional[datetime] = None,
+    ) -> Optional[TaskInfo]:
+        config_content = self.get_task_config_content(source_run_id)
+        if not config_content:
+            return None
+        source_snapshot = self._load_run_snapshot(source_run_id) or {}
+        return self.create_task(
+            config_content=config_content,
+            task_type=str(source_snapshot.get("task_type") or "benchmark"),
+            scheduled_at=scheduled_at,
+        )
 
     def run_task(self, run_id: str) -> None:
         """Run a task in the background.
@@ -506,17 +704,43 @@ class TaskService:
         """
         task_info = self._tasks.get(run_id)
         if not task_info:
-            logger.error("Task not found: %s", run_id)
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                logger.error("Task not found: %s", run_id)
+                return
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+            self._progress.setdefault(run_id, TaskProgress(run_id=run_id, status=task_info.status))
+
+        existing_timer = self._scheduled_timers.pop(run_id, None)
+        if existing_timer:
+            existing_timer.cancel()
+
+        if task_info.status == TaskStatus.CANCELLED:
+            logger.info("Task %s has been cancelled before execution start", run_id)
             return
 
-        # Update status
         task_info.status = TaskStatus.RUNNING
         task_info.started_at = datetime.now()
+        task_info.completed_at = None
+        task_info.error_message = None
+        task_info.scheduled_at = task_info.scheduled_at
 
         progress = self._progress.get(run_id)
         if progress:
             progress.status = TaskStatus.RUNNING
             progress.started_at = task_info.started_at
+            progress.paused_at = None
+            progress.paused_duration_seconds = 0.0
+
+        self._storage.update_run_status(
+            run_id,
+            status=TaskStatus.RUNNING.value,
+            started_at=int(task_info.started_at.timestamp()),
+            completed_at=0,
+            scheduled_at=0,
+            error_message="",
+        )
 
         config = self._load_run_config(run_id)
         dataset_total = self._estimate_dataset_total(config)
@@ -527,46 +751,60 @@ class TaskService:
             progress.executors = self._build_executor_progress(config, [], TaskStatus.RUNNING, dataset_total)
             progress.topology = self._build_topology(config, progress.executors)
 
-        # Create control events
-        cancel_event = threading.Event()
-        pause_event = threading.Event()
-        self._cancel_events[run_id] = cancel_event
-        self._pause_events[run_id] = pause_event
+        cancel_event = self._cancel_events.get(run_id)
+        if cancel_event is None:
+            cancel_event = threading.Event()
+            self._cancel_events[run_id] = cancel_event
+        pause_event = self._pause_events.get(run_id)
+        if pause_event is None:
+            pause_event = threading.Event()
+            self._pause_events[run_id] = pause_event
         self._resume_events[run_id] = threading.Event()
 
+        temp_config_path = None
         try:
-            # Load config
-            temp_config_path = None
-            if task_info.config_path:
-                config = normalize_run_config(load_config(task_info.config_path))
-                config_path = task_info.config_path
-            elif self._config_contents.get(run_id):
+            if self._config_contents.get(run_id):
                 import tempfile
-                config, normalized_content = load_run_config_content(self._config_contents[run_id])
 
-                # Create temporary file for config
+                config, _ = load_run_config_content(self._config_contents[run_id])
+                config = self._inject_pricing_snapshot(config)
+                normalized_content = self._normalize_and_snapshot_config_content(config)
+                self._config_contents[run_id] = normalized_content
                 temp_file = tempfile.NamedTemporaryFile(
-                    mode='w',
-                    suffix='.yaml',
+                    mode="w",
+                    suffix=".yaml",
                     delete=False,
-                    encoding='utf-8'
+                    encoding="utf-8",
                 )
                 temp_file.write(normalized_content)
                 temp_file.close()
                 temp_config_path = temp_file.name
                 config_path = temp_config_path
+                self._storage.register_run(
+                    run_id,
+                    config,
+                    config_path="",
+                    config_content=normalized_content,
+                    task_type=task_info.task_type,
+                    status=TaskStatus.RUNNING.value,
+                    scheduled_at=0,
+                )
+            elif task_info.config_path:
+                config = normalize_run_config(load_config(task_info.config_path))
+                config = self._inject_pricing_snapshot(config)
+                config_path = task_info.config_path
             else:
                 raise ValueError("No configuration available")
 
-            # Create run manager
             manager = RunManager(
                 config,
                 config_path=config_path,
                 pricing_path=None,
                 run_id=run_id,
+                register_run=False,
+                cancel_event=cancel_event,
             )
 
-            # Start progress monitoring in background
             monitor_thread = threading.Thread(
                 target=self._monitor_progress,
                 args=(run_id, cancel_event),
@@ -574,22 +812,23 @@ class TaskService:
             )
             monitor_thread.start()
 
-            # Run the task
             manager.run()
 
-            # Update completion status and calculate total cost
             task_info.status = TaskStatus.COMPLETED
             task_info.completed_at = datetime.now()
-            self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
+            self._storage.update_run_status(
+                run_id,
+                status=TaskStatus.COMPLETED.value,
+                completed_at=int(task_info.completed_at.timestamp()),
+                error_message="",
+            )
 
             if progress:
                 progress.status = TaskStatus.COMPLETED
-                # Fix elapsed_seconds to final value
                 if progress.started_at and task_info.completed_at:
                     progress.elapsed_seconds = (task_info.completed_at - progress.started_at).total_seconds()
                 self._update_progress_snapshot(run_id, task_status=TaskStatus.COMPLETED, progress=progress)
 
-            # Calculate and save total cost to database
             try:
                 records = list(self._storage.fetch_run_records(run_id))
                 total_cost = sum(r.total_cost for r in records)
@@ -599,32 +838,49 @@ class TaskService:
             except Exception as e:
                 logger.warning("Failed to update run cost: %s", e)
 
+        except TaskCancelledError:
+            logger.info("Task %s cancelled during execution", run_id)
+            task_info.status = TaskStatus.CANCELLED
+            task_info.completed_at = datetime.now()
+            task_info.error_message = "Task cancelled"
+            self._storage.update_run_status(
+                run_id,
+                status=TaskStatus.CANCELLED.value,
+                completed_at=int(task_info.completed_at.timestamp()),
+                error_message=task_info.error_message,
+            )
+            if progress:
+                progress.status = TaskStatus.CANCELLED
+                self._update_progress_snapshot(run_id, task_status=TaskStatus.CANCELLED, progress=progress)
         except Exception as e:
             logger.exception("Task failed: %s", e)
             task_info.status = TaskStatus.FAILED
             task_info.error_message = str(e)
             task_info.completed_at = datetime.now()
-            self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
+            self._storage.update_run_status(
+                run_id,
+                status=TaskStatus.FAILED.value,
+                completed_at=int(task_info.completed_at.timestamp()),
+                error_message=task_info.error_message,
+            )
 
             if progress:
                 progress.status = TaskStatus.FAILED
                 self._update_progress_snapshot(run_id, task_status=TaskStatus.FAILED, progress=progress)
 
         finally:
-            # Cleanup control events
             self._cancel_events.pop(run_id, None)
             self._pause_events.pop(run_id, None)
             self._resume_events.pop(run_id, None)
 
-            # Cleanup temp config file
             if temp_config_path:
                 try:
                     import os
+
                     os.unlink(temp_config_path)
                 except Exception:
                     pass
 
-            # Broadcast final status via WebSocket
             asyncio.run(self._broadcast_status(run_id))
 
     def _monitor_progress(
@@ -789,14 +1045,7 @@ class TaskService:
         try:
             run = self._storage.get_run(run_id)
             if run:
-                return TaskInfo(
-                    run_id=run_id,
-                    status=TaskStatus.COMPLETED,
-                    config_path=run.get("config_path"),
-                    task_name=run.get("info", ""),
-                    created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
-                    completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
-                )
+                return self._build_task_info_from_snapshot(run)
         except Exception as e:
             logger.warning("Failed to load task from database: %s", e)
 
@@ -847,34 +1096,22 @@ class TaskService:
         Returns:
             List of TaskInfo.
         """
-        tasks = list(self._tasks.values())
-
-        # Also load tasks from database
         try:
-            db_runs = self._storage.list_runs(limit=limit * 2)  # Get more for filtering
-            for run in db_runs:
-                run_id = run.get("run_id")
-                if run_id and run_id not in self._tasks:
-                    # Convert database run to TaskInfo
-                    task = TaskInfo(
-                        run_id=run_id,
-                        status=TaskStatus.COMPLETED,  # Assume completed if in DB
-                        config_path=run.get("config_path"),
-                        task_name=run.get("info", ""),
-                        created_at=datetime.fromtimestamp(run.get("created_at", 0)) if run.get("created_at") else datetime.now(),
-                        completed_at=datetime.fromtimestamp(run.get("completed_at", 0)) if run.get("completed_at") else None,
-                    )
-                    tasks.append(task)
+            db_runs = self._storage.list_runs(
+                limit=limit,
+                offset=offset,
+                status=status.value if status else None,
+            )
         except Exception as e:
             logger.warning("Failed to load tasks from database: %s", e)
+            db_runs = []
 
-        if status:
-            tasks = [t for t in tasks if t.status == status]
-
-        # Sort by creation time (newest first)
-        tasks.sort(key=lambda t: t.created_at, reverse=True)
-
-        return tasks[offset:offset + limit]
+        tasks: List[TaskInfo] = []
+        for run in db_runs:
+            run_id = run.get("run_id")
+            memory_task = self._tasks.get(run_id or "")
+            tasks.append(memory_task or self._build_task_info_from_snapshot(run))
+        return tasks
 
     def count_tasks(self, status: Optional[TaskStatus] = None) -> int:
         """Count tasks from both memory and database.
@@ -885,21 +1122,10 @@ class TaskService:
         Returns:
             Number of tasks.
         """
-        # Count from database
         try:
-            db_runs = self._storage.list_runs(limit=1000)
-            db_count = len(db_runs)
+            return self._storage.count_runs(status.value if status else None)
         except Exception:
-            db_count = 0
-
-        if status:
-            memory_count = sum(1 for t in self._tasks.values() if t.status == status)
-            # For database tasks, we assume completed status
-            if status == TaskStatus.COMPLETED:
-                return memory_count + db_count
-            return memory_count
-
-        return len(self._tasks) + db_count
+            return 0
 
     def cancel_task(self, run_id: str) -> bool:
         """Cancel a running task.
@@ -912,10 +1138,18 @@ class TaskService:
         """
         task_info = self._tasks.get(run_id)
         if not task_info:
+            snapshot = self._load_run_snapshot(run_id)
+            if not snapshot:
+                return False
+            task_info = self._build_task_info_from_snapshot(snapshot)
+            self._tasks[run_id] = task_info
+
+        if task_info.status not in (TaskStatus.SCHEDULED, TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.PAUSED):
             return False
 
-        if task_info.status not in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.PAUSED):
-            return False
+        scheduled_timer = self._scheduled_timers.pop(run_id, None)
+        if scheduled_timer:
+            scheduled_timer.cancel()
 
         # Clear pause event if paused to allow cancellation
         if task_info.status == TaskStatus.PAUSED:
@@ -931,12 +1165,19 @@ class TaskService:
         # Update status
         task_info.status = TaskStatus.CANCELLED
         task_info.completed_at = datetime.now()
+        task_info.error_message = "Task cancelled"
 
         progress = self._progress.get(run_id)
         if progress:
             progress.status = TaskStatus.CANCELLED
             self._update_progress_snapshot(run_id, task_status=TaskStatus.CANCELLED, progress=progress)
-        self._storage.mark_run_completed(run_id, int(task_info.completed_at.timestamp()))
+        self._storage.update_run_status(
+            run_id,
+            status=TaskStatus.CANCELLED.value,
+            completed_at=int(task_info.completed_at.timestamp()),
+            scheduled_at=0,
+            error_message=task_info.error_message,
+        )
 
         # Broadcast status change
         asyncio.run(self._broadcast_status(run_id))
@@ -971,6 +1212,7 @@ class TaskService:
         # Note: Actual status change happens in _monitor_progress
         # to ensure graceful pause
         logger.info("Pause requested for task %s", run_id)
+        self._storage.update_run_status(run_id, status=TaskStatus.PAUSED.value)
 
         # Broadcast that pause was requested
         asyncio.run(self._broadcast_status(run_id))
@@ -1005,6 +1247,7 @@ class TaskService:
 
         # Note: Actual status change happens in _monitor_progress
         logger.info("Resume requested for task %s", run_id)
+        self._storage.update_run_status(run_id, status=TaskStatus.RUNNING.value)
 
         # Broadcast that resume was requested
         asyncio.run(self._broadcast_status(run_id))
@@ -1032,16 +1275,11 @@ class TaskService:
         Returns:
             New TaskInfo if retry started, None otherwise.
         """
-        task_info = self._tasks.get(run_id)
+        task_info = self.get_task(run_id)
         if not task_info or task_info.status != TaskStatus.FAILED:
             return None
 
-        # Create new task with same config
-        new_run_id = uuid.uuid4().hex
-        return self.create_task(
-            config_path=task_info.config_path,
-            run_id=new_run_id,
-        )
+        return self.rerun_task(run_id)
 
     def delete_task(self, run_id: str) -> bool:
         """Delete a task.
@@ -1052,8 +1290,10 @@ class TaskService:
         Returns:
             True if deleted, False if not found.
         """
+        found = False
         with self._lock:
             if run_id in self._tasks:
+                found = True
                 del self._tasks[run_id]
             if run_id in self._progress:
                 del self._progress[run_id]
@@ -1066,7 +1306,11 @@ class TaskService:
                 del self._pause_events[run_id]
             if run_id in self._resume_events:
                 del self._resume_events[run_id]
-            return True
+            scheduled_timer = self._scheduled_timers.pop(run_id, None)
+            if scheduled_timer:
+                scheduled_timer.cancel()
+        found = self._storage.delete_run(run_id) or found
+        return found
 
     def get_stats(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get statistics for a task using current persisted records.

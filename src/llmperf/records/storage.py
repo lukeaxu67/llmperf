@@ -55,22 +55,36 @@ class Storage:
         *,
         config_path: str,
         config_content: str,
+        task_type: str = "benchmark",
+        status: str = "pending",
+        scheduled_at: int = 0,
         pricing_path: str | None = None,
         pricing_content: str = "",
     ) -> None:
         # pricing_path and pricing_content are kept for backward compatibility
         # but are no longer stored in the database
         with self.db.session() as session:
-            session.merge(
-                RunORM(
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            now = int(time.time())
+            if not run:
+                run = RunORM(
                     id=run_id,
-                    task_type="run",
+                    task_type=task_type,
+                    status=status,
                     info=cfg.info,
-                    created_at=int(time.time()),
+                    created_at=now,
+                    scheduled_at=scheduled_at,
                     config_path=config_path,
                     config_content=config_content,
                 )
-            )
+                session.add(run)
+            else:
+                run.task_type = task_type or run.task_type
+                run.status = status or run.status
+                run.info = cfg.info
+                run.scheduled_at = scheduled_at
+                run.config_path = config_path
+                run.config_content = config_content
             session.commit()
 
     def insert_record(self, record: RunRecord) -> None:
@@ -193,29 +207,38 @@ class Storage:
                     created_at=row.created_at,
                 )
 
-    def list_runs(self, limit: int = 20) -> List[dict]:
+    def list_runs(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> List[dict]:
         """List all runs from the database.
 
         Args:
             limit: Maximum number of runs to return.
+            offset: Pagination offset.
+            status: Optional status filter.
 
         Returns:
             List of run dictionaries.
         """
         with self.db.session() as session:
-            rows = (
-                session.query(RunORM)
-                .order_by(RunORM.created_at.desc())
-                .limit(limit)
-                .all()
-            )
+            query = session.query(RunORM)
+            if status:
+                query = query.filter(RunORM.status == status)
+            rows = query.order_by(RunORM.created_at.desc()).offset(offset).limit(limit).all()
             return [
                 {
                     "run_id": row.id,
                     "task_type": row.task_type,
+                    "status": getattr(row, "status", "pending"),
                     "info": row.info,
                     "created_at": row.created_at,
+                    "started_at": getattr(row, "started_at", 0),
+                    "scheduled_at": getattr(row, "scheduled_at", 0),
                     "completed_at": getattr(row, "completed_at", 0),
+                    "error_message": getattr(row, "error_message", ""),
                     "config_path": row.config_path,
                     "config_content": getattr(row, "config_content", ""),
                     "total_cost": getattr(row, "total_cost", 0.0),
@@ -223,6 +246,13 @@ class Storage:
                 }
                 for row in rows
             ]
+
+    def count_runs(self, status: str | None = None) -> int:
+        with self.db.session() as session:
+            query = session.query(RunORM)
+            if status:
+                query = query.filter(RunORM.status == status)
+            return query.count()
 
     def get_run(self, run_id: str) -> Optional[dict]:
         """Get a single run snapshot."""
@@ -233,9 +263,13 @@ class Storage:
             return {
                 "run_id": row.id,
                 "task_type": row.task_type,
+                "status": getattr(row, "status", "pending"),
                 "info": row.info,
                 "created_at": row.created_at,
+                "started_at": getattr(row, "started_at", 0),
+                "scheduled_at": getattr(row, "scheduled_at", 0),
                 "completed_at": getattr(row, "completed_at", 0),
+                "error_message": getattr(row, "error_message", ""),
                 "config_path": row.config_path,
                 "config_content": getattr(row, "config_content", ""),
                 "total_cost": getattr(row, "total_cost", 0.0),
@@ -251,6 +285,31 @@ class Storage:
                 run.currency = currency
                 session.commit()
 
+    def update_run_status(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        started_at: Optional[int] = None,
+        completed_at: Optional[int] = None,
+        scheduled_at: Optional[int] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if not run:
+                return
+            run.status = status
+            if started_at is not None:
+                run.started_at = started_at
+            if completed_at is not None:
+                run.completed_at = completed_at
+            if scheduled_at is not None:
+                run.scheduled_at = scheduled_at
+            if error_message is not None:
+                run.error_message = error_message
+            session.commit()
+
     def mark_run_completed(self, run_id: str, completed_at: Optional[int] = None) -> None:
         """Record run completion timestamp."""
         with self.db.session() as session:
@@ -259,13 +318,23 @@ class Storage:
                 run.completed_at = completed_at or int(time.time())
                 session.commit()
 
+    def delete_run(self, run_id: str) -> bool:
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if not run:
+                return False
+            session.query(ExecutionORM).filter(ExecutionORM.run_id == run_id).delete()
+            session.delete(run)
+            session.commit()
+            return True
+
     def get_total_cost(self) -> dict:
         """Get total cost across all runs."""
         with self.db.session() as session:
             # Sum from runs table
             runs = session.query(RunORM).all()
             total_cost = sum(getattr(r, "total_cost", 0.0) for r in runs)
-            run_count = len(runs)
+            run_count = session.query(RunORM).count()
 
             # Also calculate from executions for accuracy
             from sqlalchemy import func

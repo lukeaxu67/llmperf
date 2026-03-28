@@ -49,11 +49,12 @@ export default api
 // Types
 export interface Task {
   run_id: string
-  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  status: 'scheduled' | 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
   config_path?: string
   task_name: string
   task_type?: 'benchmark' | 'monitoring'
   created_at: string
+  scheduled_at?: string
   started_at?: string
   completed_at?: string
   error_message?: string
@@ -224,7 +225,7 @@ export const taskApi = {
   get: (runId: string) =>
     api.get<Task>(`/tasks/${runId}`),
 
-  create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean; task_type?: 'benchmark' | 'monitoring' }) =>
+  create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean; task_type?: 'benchmark' | 'monitoring'; scheduled_at?: string }) =>
     api.post<Task>('/tasks', data),
 
   getProgress: (runId: string) =>
@@ -250,6 +251,12 @@ export const taskApi = {
 
   retry: (runId: string) =>
     api.post(`/tasks/${runId}/retry`),
+
+  rerun: (runId: string, data?: { auto_start?: boolean; scheduled_at?: string }) =>
+    api.post(`/tasks/${runId}/rerun`, data),
+
+  getConfig: (runId: string) =>
+    api.get<{ run_id: string; config_content: string }>(`/tasks/${runId}/config`),
 
   delete: (runId: string) =>
     api.delete(`/tasks/${runId}`),
