@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from fastapi.testclient import TestClient
 
 from llmperf.providers.base import ProviderRequest
@@ -165,3 +167,101 @@ def test_openai_chat_provider_preserves_exception_details_when_no_content(monkey
     assert record.status == -1
     assert "Model access denied." in record.info
     assert "no content" not in record.info
+
+
+def test_openai_chat_provider_does_not_forward_model_twice(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            delta = type("Delta", (), {"reasoning_content": None, "content": "ok"})()
+            choice = type("Choice", (), {"delta": delta})()
+            chunk = type("Chunk", (), {"choices": [choice]})()
+            return [chunk]
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(OpenAIChatProvider, "build_client", lambda self, options: FakeClient())
+
+    provider = OpenAIChatProvider("openai")
+    provider.invoke(
+        ProviderRequest(
+            run_id="run-3",
+            executor_id="exec-3",
+            dataset_row_id="row-3",
+            provider="openai",
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "ping"}],
+            options={"model": "gpt-4o-mini", "temperature": 0.1},
+        )
+    )
+
+    assert captured["model"] == "gpt-4o-mini"
+    assert captured["temperature"] == 0.1
+
+
+def test_test_run_executes_executors_in_parallel(monkeypatch):
+    from llmperf.providers import base as provider_base
+
+    config_content = """
+info: "Parallel Test"
+dataset:
+  source:
+    type: "jsonl"
+    name: "test_3"
+    config:
+      path: "resource/test_3.jsonl"
+  iterator:
+    mutation_chain: ["identity"]
+    max_rounds: 1
+executors:
+  - id: "exec-a"
+    name: "Executor A"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-a"
+  - id: "exec-b"
+    name: "Executor B"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-b"
+"""
+
+    class SlowProvider:
+        def invoke(self, request):
+            time.sleep(0.35)
+            return RunRecord(
+                run_id=request.run_id,
+                executor_id=request.executor_id,
+                dataset_row_id=request.dataset_row_id,
+                provider=request.provider,
+                model=request.model,
+                status=200,
+                content=["ok"],
+                action_times=[1, 2, 3],
+            )
+
+    monkeypatch.setattr(provider_base, "create_provider", lambda *args, **kwargs: SlowProvider())
+
+    started = time.perf_counter()
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/tasks/test-run",
+            json={"config_content": config_content},
+        )
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert len(body["results"]) == 2
+    assert elapsed < 0.65

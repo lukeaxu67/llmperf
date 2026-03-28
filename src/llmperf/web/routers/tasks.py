@@ -554,6 +554,7 @@ async def test_run(request: TestRunRequest = Body(...)):
     running a full benchmark task.
     """
     import time
+    import concurrent.futures
     from llmperf.providers.base import create_provider
     from llmperf.datasets.dataset_source_registry import create_source
 
@@ -583,10 +584,7 @@ async def test_run(request: TestRunRequest = Body(...)):
         first_record = records[0]
         from llmperf.providers.base import ProviderRequest
 
-        results: List[Dict[str, Any]] = []
-        overall_success = True
-
-        for executor_config in config.executors:
+        def _run_executor(executor_config) -> Dict[str, Any]:
             provider = create_provider(
                 executor_config.type,
                 executor_config.impl or "default",
@@ -632,25 +630,54 @@ async def test_run(request: TestRunRequest = Body(...)):
                     "desc": str(executor_exc),
                 }, ensure_ascii=False))
             duration_ms = (time.time() - start_time) * 1000
-            overall_success = overall_success and success
 
-            results.append(
-                {
-                    "executor_id": executor_config.id,
-                    "executor_name": executor_config.name,
-                    "provider": executor_config.type,
-                    "model": executor_config.model or "unknown",
-                    "success": success,
-                    "duration_ms": duration_ms,
-                    "first_token_ms": first_token_ms,
-                    "tokens_per_second": tokens_per_second,
-                    "response": response_text,
-                    "status_code": error_payload["status_code"],
-                    "error_type": error_payload["error_type"],
-                    "error_detail": error_payload["error_detail"],
-                    "error": error_payload["error_message"],
-                }
-            )
+            return {
+                "executor_id": executor_config.id,
+                "executor_name": executor_config.name,
+                "provider": executor_config.type,
+                "model": executor_config.model or "unknown",
+                "success": success,
+                "duration_ms": duration_ms,
+                "first_token_ms": first_token_ms,
+                "tokens_per_second": tokens_per_second,
+                "response": response_text,
+                "status_code": error_payload["status_code"],
+                "error_type": error_payload["error_type"],
+                "error_detail": error_payload["error_detail"],
+                "error": error_payload["error_message"],
+            }
+
+        results_by_id: Dict[str, Dict[str, Any]] = {}
+        max_workers = max(1, len(config.executors))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor_pool:
+            future_to_executor = {
+                executor_pool.submit(_run_executor, executor_config): executor_config
+                for executor_config in config.executors
+            }
+            for future in concurrent.futures.as_completed(future_to_executor):
+                executor_config = future_to_executor[future]
+                try:
+                    results_by_id[executor_config.id] = future.result()
+                except Exception as executor_exc:
+                    logger.exception("Test run worker failed for executor %s: %s", executor_config.id, executor_exc)
+                    results_by_id[executor_config.id] = {
+                        "executor_id": executor_config.id,
+                        "executor_name": executor_config.name,
+                        "provider": executor_config.type,
+                        "model": executor_config.model or "unknown",
+                        "success": False,
+                        "duration_ms": 0,
+                        "first_token_ms": 0,
+                        "tokens_per_second": 0,
+                        "response": "",
+                        "status_code": -1,
+                        "error_type": type(executor_exc).__name__,
+                        "error_detail": {"desc": str(executor_exc)},
+                        "error": str(executor_exc),
+                    }
+
+        results = [results_by_id[executor_config.id] for executor_config in config.executors]
+        overall_success = all(item["success"] for item in results)
 
         first_result = results[0]
         return TestRunResponse(

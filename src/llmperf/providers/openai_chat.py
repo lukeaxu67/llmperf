@@ -15,6 +15,7 @@ from .streaming import StreamAccumulator
 logger = logging.getLogger(__name__)
 
 _INTERNAL_OPTION_KEYS = {
+    "model",
     "api_url",
     "api_key",
     "timeout",
