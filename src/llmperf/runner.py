@@ -23,7 +23,8 @@ class RunManager:
         self,
         config: RunConfig,
         *,
-        config_path: str,
+        config_path: str = "",
+        config_content: str | None = None,
         pricing_path: Optional[str] = None,
         run_id: str | None = None,
         register_run: bool = True,
@@ -41,7 +42,12 @@ class RunManager:
 
         self.price_catalog = PriceCatalog(list(config.pricing))
 
-        self.config_content = read_text_file(config_path)
+        if config_content is not None:
+            self.config_content = config_content
+        elif config_path:
+            self.config_content = read_text_file(config_path)
+        else:
+            self.config_content = ""
         # pricing_path is kept for backward compatibility but no longer used
         # Prices are now fetched automatically from pricing_history table
 

@@ -407,6 +407,52 @@ def test_storage_infers_legacy_run_statuses_from_timestamps(tmp_path):
     assert storage.count_runs("running") == 1
 
 
+def test_task_service_prefers_config_snapshot_over_stale_config_path(tmp_path, monkeypatch):
+    db_path = tmp_path / "stale-config.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config, normalized_content = load_run_config_content(LEGACY_WEB_CONFIG)
+    storage = Storage(str(db_path))
+    storage.register_run(
+        "run-stale-config",
+        config,
+        config_path="/tmp/should-not-be-used.yaml",
+        config_content=normalized_content,
+        task_type="benchmark",
+        status="completed",
+    )
+    storage.update_run_status(
+        "run-stale-config",
+        status="completed",
+        started_at=int(time.time()) - 5,
+        completed_at=int(time.time()),
+    )
+
+    service = TaskService()
+    loaded = service._load_run_config("run-stale-config")
+    assert loaded is not None
+    assert loaded.dataset.source.name == "test"
+
+
+def test_create_task_from_config_path_persists_self_contained_snapshot(tmp_path, monkeypatch):
+    db_path = tmp_path / "config-path.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config_path = tmp_path / "task.yaml"
+    config_path.write_text(LEGACY_WEB_CONFIG, encoding="utf-8")
+
+    service = TaskService()
+    task = service.create_task(config_path=str(config_path))
+    snapshot = service._storage.get_run(task.run_id)
+
+    assert snapshot is not None
+    assert snapshot["config_content"]
+    assert snapshot["config_path"] == ""
+    assert task.config_path is None
+
+
 def test_task_service_marks_topology_end_node_completed_when_all_executors_completed(tmp_path, monkeypatch):
     db_path = tmp_path / "end-node.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))

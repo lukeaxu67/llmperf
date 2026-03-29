@@ -255,15 +255,16 @@ class TaskService:
             if run_id in self._config_contents:
                 config, _ = load_run_config_content(self._config_contents[run_id])
                 return config
+            run_snapshot = self._load_run_snapshot(run_id)
+            if run_snapshot:
+                config_content = run_snapshot.get("config_content") or ""
+                if config_content:
+                    config, _ = load_run_config_content(config_content)
+                    return config
             if task_info and task_info.config_path:
                 return normalize_run_config(load_config(task_info.config_path))
-            run_snapshot = self._load_run_snapshot(run_id)
             if not run_snapshot:
                 return None
-            config_content = run_snapshot.get("config_content") or ""
-            if config_content:
-                config, _ = load_run_config_content(config_content)
-                return config
             config_path = run_snapshot.get("config_path")
             if config_path:
                 return normalize_run_config(load_config(str(config_path)))
@@ -651,7 +652,7 @@ class TaskService:
         task_info = TaskInfo(
             run_id=run_id,
             status=initial_status,
-            config_path=config_path,
+            config_path=None,
             task_name=config.info or "Untitled Task",
             task_type=task_type,
             scheduled_at=scheduled_at,
@@ -672,7 +673,7 @@ class TaskService:
         self._storage.register_run(
             run_id,
             config,
-            config_path=config_path or "",
+            config_path="",
             config_content=normalized_config_content or "",
             task_type=task_type,
             status=initial_status.value,
@@ -879,25 +880,13 @@ class TaskService:
             self._pause_events[run_id] = pause_event
         self._resume_events[run_id] = threading.Event()
 
-        temp_config_path = None
         try:
-            if self._config_contents.get(run_id):
-                import tempfile
-
-                config, _ = load_run_config_content(self._config_contents[run_id])
+            config_snapshot = self.get_task_config_content(run_id)
+            if config_snapshot:
+                config, _ = load_run_config_content(config_snapshot)
                 config = self._inject_pricing_snapshot(config)
                 normalized_content = self._normalize_and_snapshot_config_content(config)
                 self._config_contents[run_id] = normalized_content
-                temp_file = tempfile.NamedTemporaryFile(
-                    mode="w",
-                    suffix=".yaml",
-                    delete=False,
-                    encoding="utf-8",
-                )
-                temp_file.write(normalized_content)
-                temp_file.close()
-                temp_config_path = temp_file.name
-                config_path = temp_config_path
                 self._storage.register_run(
                     run_id,
                     config,
@@ -910,13 +899,24 @@ class TaskService:
             elif task_info.config_path:
                 config = normalize_run_config(load_config(task_info.config_path))
                 config = self._inject_pricing_snapshot(config)
-                config_path = task_info.config_path
+                normalized_content = self._normalize_and_snapshot_config_content(config)
+                self._config_contents[run_id] = normalized_content
+                self._storage.register_run(
+                    run_id,
+                    config,
+                    config_path="",
+                    config_content=normalized_content,
+                    task_type=task_info.task_type,
+                    status=TaskStatus.RUNNING.value,
+                    scheduled_at=0,
+                )
             else:
                 raise ValueError("No configuration available")
 
             manager = RunManager(
                 config,
-                config_path=config_path,
+                config_path="",
+                config_content=normalized_content,
                 pricing_path=None,
                 run_id=run_id,
                 register_run=False,
@@ -990,14 +990,6 @@ class TaskService:
             self._cancel_events.pop(run_id, None)
             self._pause_events.pop(run_id, None)
             self._resume_events.pop(run_id, None)
-
-            if temp_config_path:
-                try:
-                    import os
-
-                    os.unlink(temp_config_path)
-                except Exception:
-                    pass
 
             self._dispatch_async(self._broadcast_status(run_id))
 
