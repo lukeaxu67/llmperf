@@ -461,6 +461,46 @@ def test_batch_progress_endpoint_returns_multiple_task_snapshots(tmp_path, monke
         assert items[first_run_id]["completed"] == 1
 
 
+def test_get_progress_returns_detached_snapshot(tmp_path, monkeypatch):
+    db_path = tmp_path / "progress-snapshot.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    service = TaskService()
+    task_info = service.create_task(config_content=LEGACY_WEB_CONFIG)
+
+    storage = Storage(str(db_path))
+    storage.insert_record(
+        RunRecord(
+            run_id=task_info.run_id,
+            executor_id="mock-001",
+            dataset_row_id="row-1",
+            provider="mock",
+            model="mock-model",
+            status=200,
+            qtokens=10,
+            atokens=20,
+            total_cost=0.12,
+            currency="CNY",
+            action_times=[1, 2, 3],
+            content=["ok"],
+        )
+    )
+
+    first_progress = service.get_progress(task_info.run_id)
+    assert first_progress is not None
+    assert first_progress.executors
+    assert first_progress.topology["nodes"]
+
+    first_progress.executors[0]["name"] = "tampered"
+    first_progress.topology["nodes"][0]["name"] = "tampered-start"
+
+    second_progress = service.get_progress(task_info.run_id)
+    assert second_progress is not None
+    assert second_progress.executors[0]["name"] != "tampered"
+    assert second_progress.topology["nodes"][0]["name"] != "tampered-start"
+
+
 def test_task_errors_endpoint_returns_parsed_error_details(tmp_path, monkeypatch):
     db_path = tmp_path / "task-errors.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))

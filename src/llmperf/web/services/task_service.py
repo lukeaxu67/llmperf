@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import threading
 import time
@@ -778,6 +779,37 @@ class TaskService:
         self._completed_progress_cache.pop(run_id, None)
         self._completed_stats_cache.pop(run_id, None)
 
+    @staticmethod
+    def _clone_progress(progress: TaskProgress) -> TaskProgress:
+        """Return an immutable snapshot for API serialization.
+
+        Progress objects are updated in-place by monitor threads. Returning
+        detached copies prevents concurrent request handlers from observing
+        partially-mutated nested structures such as executors/topology.
+        """
+        return TaskProgress(
+            run_id=progress.run_id,
+            status=progress.status,
+            progress_percent=progress.progress_percent,
+            completed=progress.completed,
+            total=progress.total,
+            elapsed_seconds=progress.elapsed_seconds,
+            eta_seconds=progress.eta_seconds,
+            success_count=progress.success_count,
+            error_count=progress.error_count,
+            current_cost=progress.current_cost,
+            currency=progress.currency,
+            started_at=progress.started_at,
+            paused_duration_seconds=progress.paused_duration_seconds,
+            current_rate=progress.current_rate,
+            concurrency=progress.concurrency,
+            paused_at=progress.paused_at,
+            dataset_total_per_executor=progress.dataset_total_per_executor,
+            executors=copy.deepcopy(progress.executors),
+            topology=copy.deepcopy(progress.topology),
+            last_updated_at=progress.last_updated_at,
+        )
+
     def create_task(
         self,
         config_path: Optional[str] = None,
@@ -1350,7 +1382,7 @@ class TaskService:
         # Completed tasks: return from cache (stats never change)
         cached = self._completed_progress_cache.get(run_id)
         if cached:
-            return cached
+            return self._clone_progress(cached)
 
         progress = self._progress.get(run_id)
         if progress:
@@ -1358,8 +1390,9 @@ class TaskService:
                 progress.last_updated_at is not None
                 and (datetime.now() - progress.last_updated_at).total_seconds() < self._active_progress_cache_ttl_seconds
             ):
-                return progress
-            return self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
+                return self._clone_progress(progress)
+            updated = self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
+            return self._clone_progress(updated) if updated else None
 
         task_info = self.get_task(run_id)
         if not task_info:
@@ -1378,7 +1411,7 @@ class TaskService:
         result = self._update_progress_snapshot(run_id, task_status=task_info.status, progress=synthetic_progress)
         if task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED) and result:
             self._completed_progress_cache[run_id] = result
-        return result
+        return self._clone_progress(result) if result else None
 
     def list_tasks(
         self,
@@ -1708,7 +1741,7 @@ class TaskService:
 
         progress = self.get_progress(run_id)
         task_status = progress.status if progress else (task_info.status if task_info else TaskStatus.COMPLETED)
-        executor_summary = progress.executors if progress else self._get_executor_summary(run_id)
+        executor_summary = copy.deepcopy(progress.executors) if progress else self._get_executor_summary(run_id)
 
         # Calculate dimension scores
         latency_score = self._calculate_latency_score(stats.get("avg_first_resp_time", 0))
@@ -1778,7 +1811,7 @@ class TaskService:
             },
             "executor_summary": executor_summary,
             "cost_analysis": cost_analysis,
-            "topology": progress.topology if progress else {"nodes": [], "edges": [], "layers": []},
+            "topology": copy.deepcopy(progress.topology) if progress else {"nodes": [], "edges": [], "layers": []},
             "alerts": alerts,
             "recommendations": recommendations,
         }

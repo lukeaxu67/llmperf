@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Alert,
@@ -106,16 +107,45 @@ export default function TaskDetail() {
   const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
   const [runtimeConfig, setRuntimeConfig] = useState<TaskRuntimeConfig | null>(null)
   const [runtimeForm] = Form.useForm()
+  const requestControllersRef = useRef<{
+    bundle?: AbortController
+    report?: AbortController
+    errors?: AbortController
+  }>({})
+  const requestVersionRef = useRef({
+    bundle: 0,
+    report: 0,
+    errors: 0,
+  })
+
+  const isCanceledRequest = (error: unknown): boolean =>
+    axios.isCancel(error) || (typeof error === 'object' && error !== null && (error as any).code === 'ERR_CANCELED')
+
+  const startRequest = (key: 'bundle' | 'report' | 'errors') => {
+    requestControllersRef.current[key]?.abort()
+    const controller = new AbortController()
+    requestControllersRef.current[key] = controller
+    requestVersionRef.current[key] += 1
+    return {
+      controller,
+      version: requestVersionRef.current[key],
+    }
+  }
 
   const loadTaskAndProgress = async (runId: string, silent = false) => {
+    const { controller, version } = startRequest('bundle')
     if (!silent) {
       setLoading(true)
     }
     try {
       const [taskResult, progressResult] = await Promise.allSettled([
-        taskApi.get(runId),
-        taskApi.getProgress(runId),
+        taskApi.get(runId, { signal: controller.signal }),
+        taskApi.getProgress(runId, { signal: controller.signal }),
       ])
+
+      if (version !== requestVersionRef.current.bundle) {
+        return
+      }
 
       if (taskResult.status === 'fulfilled') {
         setTask(taskResult.value as any as Task)
@@ -126,37 +156,62 @@ export default function TaskDetail() {
         setProgress(null)
       }
     } catch (error: any) {
+      if (isCanceledRequest(error)) {
+        return
+      }
       message.error(error.message || '获取任务详情失败')
     } finally {
-      setLoading(false)
+      if (version === requestVersionRef.current.bundle) {
+        setLoading(false)
+      }
     }
   }
 
   const loadReport = async (runId: string, silent = false) => {
+    const { controller, version } = startRequest('report')
     if (!silent) {
       setReportLoading(true)
     }
     try {
-      const nextReport = await taskApi.getReport(runId) as any
-      setReport(nextReport as DetailedReport)
-    } catch {
-      setReport(null)
+      const nextReport = await taskApi.getReport(runId, { signal: controller.signal }) as any
+      if (version === requestVersionRef.current.report) {
+        setReport(nextReport as DetailedReport)
+      }
+    } catch (error) {
+      if (isCanceledRequest(error)) {
+        return
+      }
+      if (version === requestVersionRef.current.report) {
+        setReport(null)
+      }
     } finally {
-      setReportLoading(false)
+      if (version === requestVersionRef.current.report) {
+        setReportLoading(false)
+      }
     }
   }
 
   const loadTaskErrors = async (runId: string, silent = false) => {
+    const { controller, version } = startRequest('errors')
     if (!silent) {
       setErrorsLoading(true)
     }
     try {
-      const response = await taskApi.getErrors(runId, { limit: 20 }) as any
-      setTaskErrors(response.errors || [])
-    } catch {
-      setTaskErrors([])
+      const response = await taskApi.getErrors(runId, { limit: 20 }, { signal: controller.signal }) as any
+      if (version === requestVersionRef.current.errors) {
+        setTaskErrors(response.errors || [])
+      }
+    } catch (error) {
+      if (isCanceledRequest(error)) {
+        return
+      }
+      if (version === requestVersionRef.current.errors) {
+        setTaskErrors([])
+      }
     } finally {
-      setErrorsLoading(false)
+      if (version === requestVersionRef.current.errors) {
+        setErrorsLoading(false)
+      }
     }
   }
 
@@ -176,6 +231,11 @@ export default function TaskDetail() {
     setReport(null)
     setTaskErrors([])
     void loadTaskBundle(id)
+    return () => {
+      requestControllersRef.current.bundle?.abort()
+      requestControllersRef.current.report?.abort()
+      requestControllersRef.current.errors?.abort()
+    }
   }, [id])
 
   useEffect(() => {

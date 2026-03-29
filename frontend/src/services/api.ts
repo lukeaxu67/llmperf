@@ -1,7 +1,11 @@
-import axios from 'axios'
+import axios, { AxiosRequestConfig } from 'axios'
+
+const apiBaseURL = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:8000/api`)
+  : '/api'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: apiBaseURL,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -24,6 +28,9 @@ api.interceptors.response.use(
     return response.data
   },
   (error) => {
+    if (axios.isCancel(error) || error?.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
     let message = '请求失败'
 
     if (error.response?.data?.detail) {
@@ -268,14 +275,14 @@ export const taskApi = {
   list: (params?: { status?: string; limit?: number; offset?: number }) =>
     api.get<{ tasks: Task[]; total: number }>('/tasks', { params }),
 
-  get: (runId: string) =>
-    api.get<Task>(`/tasks/${runId}`),
+  get: (runId: string, config?: AxiosRequestConfig) =>
+    api.get<Task>(`/tasks/${runId}`, config),
 
   create: (data: { config_path?: string; config_content?: string; run_id?: string; auto_start?: boolean; task_type?: 'benchmark' | 'monitoring'; scheduled_at?: string }) =>
     api.post<Task>('/tasks', data),
 
-  getProgress: (runId: string) =>
-    api.get<TaskProgress>(`/tasks/${runId}/progress`),
+  getProgress: (runId: string, config?: AxiosRequestConfig) =>
+    api.get<TaskProgress>(`/tasks/${runId}/progress`, config),
 
   getProgressBatch: (runIds: string[]) =>
     api.post<{ items: Record<string, TaskProgress> }>(`/tasks/progress/batch`, { run_ids: runIds }),
@@ -283,11 +290,18 @@ export const taskApi = {
   getStats: (runId: string) =>
     api.get<TaskStats>(`/tasks/${runId}/stats`),
 
-  getReport: (runId: string) =>
-    api.get(`/tasks/${runId}/report`),
+  getReport: (runId: string, config?: AxiosRequestConfig) =>
+    api.get(`/tasks/${runId}/report`, config),
 
-  getErrors: (runId: string, params?: { limit?: number; offset?: number }) =>
-    api.get<{ total: number; errors: TaskErrorItem[]; limit: number; offset: number }>(`/tasks/${runId}/errors`, { params }),
+  getErrors: (
+    runId: string,
+    params?: { limit?: number; offset?: number },
+    config?: AxiosRequestConfig,
+  ) =>
+    api.get<{ total: number; errors: TaskErrorItem[]; limit: number; offset: number }>(
+      `/tasks/${runId}/errors`,
+      { ...config, params },
+    ),
 
   cancel: (runId: string) =>
     api.post(`/tasks/${runId}/cancel`),
