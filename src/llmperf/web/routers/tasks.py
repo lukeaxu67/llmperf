@@ -85,6 +85,14 @@ class TaskProgressResponse(BaseModel):
     topology: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskProgressBatchRequest(BaseModel):
+    run_ids: List[str] = Field(default_factory=list, max_length=100)
+
+
+class TaskProgressBatchResponse(BaseModel):
+    items: Dict[str, TaskProgressResponse] = Field(default_factory=dict)
+
+
 class TaskStatsResponse(BaseModel):
     """Response for task statistics."""
     run_id: str
@@ -385,6 +393,95 @@ async def get_task_progress(run_id: str):
             "Expires": "0",
         },
     )
+
+
+@router.post(
+    "/progress/batch",
+    response_model=TaskProgressBatchResponse,
+    summary="Get progress for multiple tasks",
+)
+async def get_task_progress_batch(
+    request: TaskProgressBatchRequest = Body(...),
+):
+    service = get_service()
+    items: Dict[str, TaskProgressResponse] = {}
+
+    for run_id in request.run_ids:
+        progress = service.get_progress(run_id)
+        if not progress:
+            continue
+        items[run_id] = TaskProgressResponse(
+            run_id=progress.run_id,
+            status=progress.status,
+            progress_percent=progress.progress_percent,
+            completed=progress.completed,
+            total=progress.total,
+            elapsed_seconds=progress.elapsed_seconds,
+            eta_seconds=progress.eta_seconds,
+            success_count=progress.success_count,
+            error_count=progress.error_count,
+            current_cost=progress.current_cost,
+            currency=progress.currency,
+            current_rate=progress.current_rate,
+            concurrency=progress.concurrency,
+            paused_at=progress.paused_at,
+            dataset_total_per_executor=progress.dataset_total_per_executor,
+            executors=progress.executors,
+            topology=progress.topology,
+        )
+
+    response = TaskProgressBatchResponse(items=items)
+    return JSONResponse(
+        content=response.model_dump(mode="json"),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+@router.get(
+    "/{run_id}/errors",
+    summary="Get task execution errors",
+)
+async def get_task_errors(
+    run_id: str,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Get failed execution records for a task, with parsed error details."""
+    service = get_service()
+    task = service.get_task(run_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    storage = service._storage
+    errors = storage.fetch_run_errors(run_id, limit=limit, offset=offset)
+    total = storage.count_run_errors(run_id)
+
+    formatted = []
+    for e in errors:
+        raw_info = ""
+        if e.get("error_type") or e.get("error_message"):
+            import json as _json
+            raw_info = _json.dumps({
+                "error_type": e.get("error_type", ""),
+                "desc": e.get("error_message", ""),
+            }, ensure_ascii=False)
+        detail = _format_test_run_error(e["status"], raw_info)
+        formatted.append({
+            "id": e["id"],
+            "executor_id": e["executor_id"],
+            "status": e["status"],
+            "model": e["model"],
+            "provider": e["provider"],
+            "dataset_row_id": e["dataset_row_id"],
+            "created_at": e["created_at"],
+            "error": detail,
+        })
+
+    return JSONResponse(content={"total": total, "errors": formatted, "limit": limit, "offset": offset})
 
 
 @router.get(

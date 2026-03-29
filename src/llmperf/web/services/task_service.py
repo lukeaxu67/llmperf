@@ -73,6 +73,7 @@ class TaskProgress:
     dataset_total_per_executor: int = 0
     executors: List[Dict[str, Any]] = field(default_factory=list)
     topology: Dict[str, Any] = field(default_factory=dict)
+    last_updated_at: Optional[datetime] = None
 
 
 @dataclass
@@ -110,6 +111,9 @@ class TaskService:
         self._scheduled_timers: Dict[str, threading.Timer] = {}
         self._config_contents: Dict[str, str] = {}  # Store config content for tasks
         self._lock = threading.Lock()
+        self._completed_progress_cache: Dict[str, TaskProgress] = {}
+        self._completed_stats_cache: Dict[str, Dict[str, Any]] = {}
+        self._active_progress_cache_ttl_seconds = 6.0
 
         runtime = load_runtime_config()
         self._db_path = str(runtime.db_path)
@@ -557,7 +561,7 @@ class TaskService:
 
         return executor_items
 
-    def _update_progress_snapshot(
+    def _update_progress_snapshot_lightweight(
         self,
         run_id: str,
         *,
@@ -574,26 +578,17 @@ class TaskService:
             current_progress.dataset_total_per_executor = dataset_total
             current_progress.total = dataset_total * len(config.executors)
             current_progress.concurrency = sum(max(1, executor.concurrency) for executor in config.executors)
-        else:
-            dataset_total = current_progress.dataset_total_per_executor
 
-        records = list(self._storage.fetch_run_records(run_id))
-        completed = len(records)
-        success_count = sum(1 for record in records if record.status == 200)
-        error_count = completed - success_count
-        current_progress.completed = completed
-        current_progress.success_count = success_count
-        current_progress.error_count = error_count
-        current_progress.current_cost = sum(record.total_cost for record in records)
-        if records:
-            current_progress.currency = records[0].currency
+        counts = self._storage.get_run_counts(run_id)
+        current_progress.completed = counts["total"]
+        current_progress.success_count = counts["success_count"]
+        current_progress.error_count = counts["error_count"]
+        current_progress.current_cost = counts["total_cost"]
+        current_progress.currency = counts["currency"]
         if current_progress.total > 0:
-            current_progress.progress_percent = min(100.0, (completed / current_progress.total) * 100.0)
+            current_progress.progress_percent = min(100.0, (current_progress.completed / current_progress.total) * 100.0)
 
         effective_status = task_status or current_progress.status
-        current_progress.executors = self._build_executor_progress(config, records, effective_status, dataset_total)
-        current_progress.topology = self._build_topology(config, current_progress.executors)
-
         if current_progress.started_at and effective_status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
             elapsed = (datetime.now() - current_progress.started_at).total_seconds() - current_progress.paused_duration_seconds
             current_progress.elapsed_seconds = max(elapsed, 0.0)
@@ -604,7 +599,37 @@ class TaskService:
             else:
                 current_progress.eta_seconds = 0.0 if current_progress.total and current_progress.completed >= current_progress.total else None
 
+        current_progress.last_updated_at = datetime.now()
+
         return current_progress
+
+    def _update_progress_snapshot(
+        self,
+        run_id: str,
+        *,
+        task_status: Optional[TaskStatus] = None,
+        progress: Optional[TaskProgress] = None,
+    ) -> Optional[TaskProgress]:
+        current_progress = self._update_progress_snapshot_lightweight(
+            run_id,
+            task_status=task_status,
+            progress=progress,
+        )
+        if not current_progress:
+            return None
+
+        config = self._load_run_config(run_id)
+        dataset_total = current_progress.dataset_total_per_executor
+        records = list(self._storage.fetch_run_records(run_id))
+        effective_status = task_status or current_progress.status
+        current_progress.executors = self._build_executor_progress(config, records, effective_status, dataset_total)
+        current_progress.topology = self._build_topology(config, current_progress.executors)
+        current_progress.last_updated_at = datetime.now()
+        return current_progress
+
+    def _clear_task_caches(self, run_id: str) -> None:
+        self._completed_progress_cache.pop(run_id, None)
+        self._completed_stats_cache.pop(run_id, None)
 
     def create_task(
         self,
@@ -757,6 +782,8 @@ class TaskService:
         if task_info.status not in (TaskStatus.SCHEDULED, TaskStatus.PENDING):
             return False
 
+        self._clear_task_caches(run_id)
+
         scheduled_timer = self._scheduled_timers.pop(run_id, None)
         if scheduled_timer:
             scheduled_timer.cancel()
@@ -788,6 +815,8 @@ class TaskService:
 
         if task_info.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             return False
+
+        self._clear_task_caches(run_id)
 
         if not self.get_task_config_content(run_id) and not task_info.config_path:
             return False
@@ -838,6 +867,8 @@ class TaskService:
         if task_info.status == TaskStatus.CANCELLED:
             logger.info("Task %s has been cancelled before execution start", run_id)
             return
+
+        self._clear_task_caches(run_id)
 
         task_info.status = TaskStatus.RUNNING
         task_info.started_at = datetime.now()
@@ -1011,6 +1042,7 @@ class TaskService:
         pause_event = self._pause_events.get(run_id)
         last_completed_count = 0
         last_update_time = datetime.now()
+        poll_count = 0
 
         while not cancel_event.is_set():
             try:
@@ -1057,7 +1089,13 @@ class TaskService:
 
                 # Only fetch stats and update if not paused
                 if progress.status != TaskStatus.PAUSED:
-                    self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
+                    poll_count += 1
+                    if poll_count % 5 == 0:
+                        # Full update with executor stats every 10s
+                        self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
+                    else:
+                        # Lightweight SQL aggregate update every 2s
+                        self._update_progress_snapshot_lightweight(run_id, task_status=progress.status, progress=progress)
 
                     # Calculate current rate (requests per second)
                     now = datetime.now()
@@ -1162,16 +1200,18 @@ class TaskService:
         return None
 
     def get_progress(self, run_id: str) -> Optional[TaskProgress]:
-        """Get task progress.
+        # Completed tasks: return from cache (stats never change)
+        cached = self._completed_progress_cache.get(run_id)
+        if cached:
+            return cached
 
-        Args:
-            run_id: The run ID.
-
-        Returns:
-            TaskProgress if found, None otherwise.
-        """
         progress = self._progress.get(run_id)
         if progress:
+            if (
+                progress.last_updated_at is not None
+                and (datetime.now() - progress.last_updated_at).total_seconds() < self._active_progress_cache_ttl_seconds
+            ):
+                return progress
             return self._update_progress_snapshot(run_id, task_status=progress.status, progress=progress)
 
         task_info = self.get_task(run_id)
@@ -1188,7 +1228,10 @@ class TaskService:
                 (task_info.completed_at - synthetic_progress.started_at).total_seconds(),
                 0.0,
             )
-        return self._update_progress_snapshot(run_id, task_status=task_info.status, progress=synthetic_progress)
+        result = self._update_progress_snapshot(run_id, task_status=task_info.status, progress=synthetic_progress)
+        if task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED) and result:
+            self._completed_progress_cache[run_id] = result
+        return result
 
     def list_tasks(
         self,
@@ -1431,6 +1474,7 @@ class TaskService:
                 del self._progress[run_id]
             if run_id in self._config_contents:
                 del self._config_contents[run_id]
+            self._clear_task_caches(run_id)
             # Also cleanup control events if exist
             if run_id in self._cancel_events:
                 del self._cancel_events[run_id]
@@ -1445,14 +1489,10 @@ class TaskService:
         return found
 
     def get_stats(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get statistics for a task using current persisted records.
+        cached = self._completed_stats_cache.get(run_id)
+        if cached:
+            return cached
 
-        Args:
-            run_id: The run ID.
-
-        Returns:
-            Statistics dictionary, or None if no data.
-        """
         records = list(self._storage.fetch_run_records(run_id))
 
         if not records:
@@ -1475,7 +1515,7 @@ class TaskService:
         input_tokens = [float(r.qtokens) for r in successful if r.qtokens >= 0]
         output_tokens = [float(r.atokens) for r in successful if r.atokens >= 0]
 
-        return {
+        result = {
             "total_requests": total,
             "success_count": len(successful),
             "error_count": len(failed),
@@ -1497,6 +1537,12 @@ class TaskService:
             "total_input_tokens": sum(r.qtokens for r in records),
             "total_output_tokens": sum(r.atokens for r in records),
         }
+
+        task_info = self.get_task(run_id)
+        if task_info and task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            self._completed_stats_cache[run_id] = result
+
+        return result
 
     def get_quick_report(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Generate a fresh report snapshot from current run records.
@@ -1791,10 +1837,10 @@ class TaskService:
         executor_summary: List[Dict[str, Any]],
         stats: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Calculate cost analysis by executor."""
-        records = list(self._storage.fetch_run_records(run_id))
+        """Calculate cost analysis by executor using SQL aggregates."""
+        by_executor_counts = self._storage.get_run_counts_by_executor(run_id)
 
-        if not records:
+        if not by_executor_counts:
             return {
                 "total_cost": 0,
                 "currency": "CNY",
@@ -1804,35 +1850,21 @@ class TaskService:
         total_cost = stats.get("total_cost", 0)
         currency = stats.get("currency", "CNY")
 
-        # Group by executor for cost breakdown
-        executor_costs: Dict[str, Dict[str, Any]] = {}
-        for r in records:
-            exec_id = r.executor_id or "default"
-            if exec_id not in executor_costs:
-                executor_costs[exec_id] = {
-                    "cost": 0,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "request_count": 0,
-                }
-            executor_costs[exec_id]["cost"] += r.total_cost
-            executor_costs[exec_id]["input_tokens"] += r.qtokens
-            executor_costs[exec_id]["output_tokens"] += r.atokens
-            executor_costs[exec_id]["request_count"] += 1
-
         by_executor = []
-        for exec_id, cost_data in executor_costs.items():
-            avg_cost = cost_data["cost"] / cost_data["request_count"] if cost_data["request_count"] > 0 else 0
+        for row in by_executor_counts:
+            exec_id = row["executor_id"] or "default"
+            cost = row["total_cost"]
+            count = row["total"]
+            avg_cost = cost / count if count > 0 else 0
             by_executor.append({
                 "executor": exec_id,
-                "cost": round(cost_data["cost"], 6),
-                "input_tokens": cost_data["input_tokens"],
-                "output_tokens": cost_data["output_tokens"],
-                "request_count": cost_data["request_count"],
+                "cost": round(cost, 6),
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "request_count": count,
                 "avg_cost_per_request": round(avg_cost, 6),
             })
 
-        # Sort by cost descending
         by_executor.sort(key=lambda x: x["cost"], reverse=True)
 
         return {

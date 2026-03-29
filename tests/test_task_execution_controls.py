@@ -219,6 +219,83 @@ def test_recover_endpoint_reuses_same_run_id(tmp_path, monkeypatch):
         assert calls == [run_id]
 
 
+def test_batch_progress_endpoint_returns_multiple_task_snapshots(tmp_path, monkeypatch):
+    db_path = tmp_path / "progress-batch.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        first = client.post("/api/tasks", json={"config_content": LEGACY_WEB_CONFIG, "auto_start": False})
+        second = client.post("/api/tasks", json={"config_content": LEGACY_WEB_CONFIG, "auto_start": False})
+        assert first.status_code == 200
+        assert second.status_code == 200
+
+        first_run_id = first.json()["run_id"]
+        second_run_id = second.json()["run_id"]
+
+        storage = Storage(str(db_path))
+        storage.insert_record(
+            RunRecord(
+                run_id=first_run_id,
+                executor_id="mock-001",
+                dataset_row_id="row-1",
+                provider="mock",
+                model="mock-model",
+                status=200,
+                qtokens=10,
+                atokens=20,
+                total_cost=0.12,
+                currency="CNY",
+                action_times=[1, 2, 3],
+                content=["ok"],
+            )
+        )
+
+        response = client.post(
+            "/api/tasks/progress/batch",
+            json={"run_ids": [first_run_id, second_run_id]},
+        )
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert first_run_id in items
+        assert second_run_id in items
+        assert items[first_run_id]["completed"] == 1
+
+
+def test_task_errors_endpoint_returns_parsed_error_details(tmp_path, monkeypatch):
+    db_path = tmp_path / "task-errors.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={"config_content": LEGACY_WEB_CONFIG, "auto_start": False},
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        storage = Storage(str(db_path))
+        storage.insert_record(
+            RunRecord(
+                run_id=run_id,
+                executor_id="mock-001",
+                dataset_row_id="row-err",
+                provider="mock",
+                model="mock-model",
+                status=403,
+                info='{"error_type":"Model.AccessDenied","message":"Model access denied."}',
+            )
+        )
+
+        response = client.get(f"/api/tasks/{run_id}/errors")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 1
+        assert body["errors"][0]["error"]["status_code"] == 403
+        assert "Model access denied." in body["errors"][0]["error"]["error_message"]
+
+
 def test_rename_task_updates_persisted_name(tmp_path, monkeypatch):
     db_path = tmp_path / "rename.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))

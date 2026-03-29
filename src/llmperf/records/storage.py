@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from dataclasses import dataclass
@@ -91,7 +92,7 @@ class Storage:
         return {
             "run_id": row.id,
             "task_type": row.task_type,
-            "status": self._normalize_run_status(
+            "status": getattr(row, "normalized_status", None) or self._normalize_run_status(
                 getattr(row, "status", "pending"),
                 started_at=started_at,
                 scheduled_at=scheduled_at,
@@ -132,10 +133,18 @@ class Storage:
             run = session.query(RunORM).filter(RunORM.id == run_id).first()
             now = int(time.time())
             if not run:
+                normalized_status = self._normalize_run_status(
+                    status,
+                    started_at=0,
+                    scheduled_at=scheduled_at,
+                    completed_at=0,
+                    error_message="",
+                )
                 run = RunORM(
                     id=run_id,
                     task_type=task_type,
                     status=status,
+                    normalized_status=normalized_status,
                     info=cfg.info,
                     created_at=now,
                     scheduled_at=scheduled_at,
@@ -150,6 +159,13 @@ class Storage:
                 run.scheduled_at = scheduled_at
                 run.config_path = config_path
                 run.config_content = config_content
+                run.normalized_status = self._normalize_run_status(
+                    run.status,
+                    started_at=int(getattr(run, "started_at", 0) or 0),
+                    scheduled_at=int(getattr(run, "scheduled_at", 0) or 0),
+                    completed_at=int(getattr(run, "completed_at", 0) or 0),
+                    error_message=getattr(run, "error_message", "") or "",
+                )
             session.commit()
 
     def insert_record(self, record: RunRecord) -> None:
@@ -304,40 +320,133 @@ class Storage:
         offset: int = 0,
         status: str | None = None,
     ) -> List[dict]:
-        """List all runs from the database.
-
-        Args:
-            limit: Maximum number of runs to return.
-            offset: Pagination offset.
-            status: Optional status filter.
-
-        Returns:
-            List of run dictionaries.
-        """
         with self.db.session() as session:
-            rows = session.query(RunORM).order_by(RunORM.created_at.desc()).all()
-            runs = [self._serialize_run(row) for row in rows]
+            query = session.query(RunORM).order_by(RunORM.created_at.desc())
             if status:
                 normalized_status = self._normalize_run_status(status)
-                runs = [run for run in runs if run["status"] == normalized_status]
-            return runs[offset: offset + limit]
+                query = query.filter(RunORM.normalized_status == normalized_status)
+            rows = query.offset(offset).limit(limit).all()
+            return [self._serialize_run(row) for row in rows]
 
     def count_runs(self, status: str | None = None) -> int:
+        from sqlalchemy import func
         with self.db.session() as session:
-            rows = session.query(RunORM).all()
-            if not status:
-                return len(rows)
-            normalized_status = self._normalize_run_status(status)
-            return sum(
-                1
-                for row in rows
-                if self._normalize_run_status(
-                    getattr(row, "status", "pending"),
-                    started_at=int(getattr(row, "started_at", 0) or 0),
-                    scheduled_at=int(getattr(row, "scheduled_at", 0) or 0),
-                    completed_at=int(getattr(row, "completed_at", 0) or 0),
-                    error_message=getattr(row, "error_message", "") or "",
-                ) == normalized_status
+            query = session.query(func.count(RunORM.id))
+            if status:
+                normalized_status = self._normalize_run_status(status)
+                query = query.filter(RunORM.normalized_status == normalized_status)
+            return query.scalar() or 0
+
+    def get_run_counts(self, run_id: str) -> dict:
+        """Aggregate completion stats for a run using SQL, no record deserialization."""
+        from sqlalchemy import func, case
+        with self.db.session() as session:
+            row = (
+                session.query(
+                    func.count(ExecutionORM.id).label("total"),
+                    func.sum(case((ExecutionORM.status == 200, 1), else_=0)).label("success_count"),
+                    func.sum(ExecutionORM.total_cost).label("total_cost"),
+                    func.min(ExecutionORM.currency).label("currency"),
+                )
+                .filter(ExecutionORM.run_id == run_id)
+                .one()
+            )
+            total = int(row.total or 0)
+            success = int(row.success_count or 0)
+            return {
+                "total": total,
+                "success_count": success,
+                "error_count": total - success,
+                "total_cost": float(row.total_cost or 0.0),
+                "currency": row.currency or "CNY",
+            }
+
+    def get_run_counts_by_executor(self, run_id: str) -> list[dict]:
+        """Per-executor aggregate stats using SQL GROUP BY."""
+        from sqlalchemy import func, case
+        with self.db.session() as session:
+            rows = (
+                session.query(
+                    ExecutionORM.executor_id,
+                    func.count(ExecutionORM.id).label("total"),
+                    func.sum(case((ExecutionORM.status == 200, 1), else_=0)).label("success_count"),
+                    func.sum(ExecutionORM.total_cost).label("total_cost"),
+                    func.min(ExecutionORM.currency).label("currency"),
+                )
+                .filter(ExecutionORM.run_id == run_id)
+                .group_by(ExecutionORM.executor_id)
+                .all()
+            )
+            result = []
+            for r in rows:
+                total = int(r.total or 0)
+                success = int(r.success_count or 0)
+                result.append({
+                    "executor_id": r.executor_id or "",
+                    "total": total,
+                    "success_count": success,
+                    "error_count": total - success,
+                    "total_cost": float(r.total_cost or 0.0),
+                    "currency": r.currency or "CNY",
+                })
+            return result
+
+    def fetch_run_errors(
+        self,
+        run_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Fetch failed execution records (status != 200) with minimal columns."""
+        with self.db.session() as session:
+            rows = (
+                session.query(
+                    ExecutionORM.id,
+                    ExecutionORM.executor_id,
+                    ExecutionORM.status,
+                    ExecutionORM.info,
+                    ExecutionORM.created_at,
+                    ExecutionORM.model,
+                    ExecutionORM.provider,
+                    ExecutionORM.dataset_row_id,
+                )
+                .filter(ExecutionORM.run_id == run_id)
+                .filter(ExecutionORM.status != 200)
+                .order_by(ExecutionORM.id.desc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            result = []
+            for r in rows:
+                info = {}
+                if r.info:
+                    try:
+                        info = json.loads(r.info)
+                    except Exception:
+                        info = {"raw": r.info}
+                result.append({
+                    "id": r.id,
+                    "executor_id": r.executor_id or "",
+                    "status": r.status,
+                    "error_type": info.get("error_type") or info.get("type", ""),
+                    "error_message": info.get("error") or info.get("message") or info.get("msg", ""),
+                    "model": r.model or "",
+                    "provider": r.provider or "",
+                    "dataset_row_id": r.dataset_row_id or "",
+                    "created_at": r.created_at,
+                })
+            return result
+
+    def count_run_errors(self, run_id: str) -> int:
+        """Count failed execution records for a run."""
+        from sqlalchemy import func
+        with self.db.session() as session:
+            return (
+                session.query(func.count(ExecutionORM.id))
+                .filter(ExecutionORM.run_id == run_id)
+                .filter(ExecutionORM.status != 200)
+                .scalar() or 0
             )
 
     def get_run(self, run_id: str) -> Optional[dict]:
@@ -380,6 +489,13 @@ class Storage:
                 run.scheduled_at = scheduled_at
             if error_message is not None:
                 run.error_message = error_message
+            run.normalized_status = self._normalize_run_status(
+                status,
+                started_at=int(getattr(run, "started_at", 0) or 0),
+                scheduled_at=int(getattr(run, "scheduled_at", 0) or 0),
+                completed_at=int(getattr(run, "completed_at", 0) or 0),
+                error_message=getattr(run, "error_message", "") or "",
+            )
             session.commit()
 
     def update_run_info(self, run_id: str, info: str) -> bool:

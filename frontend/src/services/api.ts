@@ -124,6 +124,22 @@ export interface TaskProgress {
   topology?: TaskTopology
 }
 
+export interface TaskErrorItem {
+  id: number
+  executor_id: string
+  status: number
+  model: string
+  provider: string
+  dataset_row_id: string
+  created_at: number
+  error: {
+    status_code: number
+    error_type: string
+    error_detail: Record<string, any>
+    error_message: string
+  }
+}
+
 export interface TaskStats {
   run_id: string
   total_requests: number
@@ -231,11 +247,17 @@ export const taskApi = {
   getProgress: (runId: string) =>
     api.get<TaskProgress>(`/tasks/${runId}/progress`),
 
+  getProgressBatch: (runIds: string[]) =>
+    api.post<{ items: Record<string, TaskProgress> }>(`/tasks/progress/batch`, { run_ids: runIds }),
+
   getStats: (runId: string) =>
     api.get<TaskStats>(`/tasks/${runId}/stats`),
 
   getReport: (runId: string) =>
     api.get(`/tasks/${runId}/report`),
+
+  getErrors: (runId: string, params?: { limit?: number; offset?: number }) =>
+    api.get<{ total: number; errors: TaskErrorItem[]; limit: number; offset: number }>(`/tasks/${runId}/errors`, { params }),
 
   cancel: (runId: string) =>
     api.post(`/tasks/${runId}/cancel`),

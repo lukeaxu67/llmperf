@@ -89,16 +89,18 @@ export default function TaskDetail() {
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [renaming, setRenaming] = useState(false)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [errorsLoading, setErrorsLoading] = useState(false)
+  const [taskErrors, setTaskErrors] = useState<any[]>([])
 
-  const loadTaskBundle = async (runId: string, silent = false) => {
+  const loadTaskAndProgress = async (runId: string, silent = false) => {
     if (!silent) {
       setLoading(true)
     }
     try {
-      const [taskResult, progressResult, reportResult] = await Promise.allSettled([
+      const [taskResult, progressResult] = await Promise.allSettled([
         taskApi.get(runId),
         taskApi.getProgress(runId),
-        taskApi.getReport(runId),
       ])
 
       if (taskResult.status === 'fulfilled') {
@@ -109,11 +111,6 @@ export default function TaskDetail() {
       } else {
         setProgress(null)
       }
-      if (reportResult.status === 'fulfilled') {
-        setReport(reportResult.value as any as DetailedReport)
-      } else {
-        setReport(null)
-      }
     } catch (error: any) {
       message.error(error.message || '获取任务详情失败')
     } finally {
@@ -121,10 +118,47 @@ export default function TaskDetail() {
     }
   }
 
+  const loadReport = async (runId: string, silent = false) => {
+    if (!silent) {
+      setReportLoading(true)
+    }
+    try {
+      const nextReport = await taskApi.getReport(runId) as any
+      setReport(nextReport as DetailedReport)
+    } catch {
+      setReport(null)
+    } finally {
+      setReportLoading(false)
+    }
+  }
+
+  const loadTaskErrors = async (runId: string, silent = false) => {
+    if (!silent) {
+      setErrorsLoading(true)
+    }
+    try {
+      const response = await taskApi.getErrors(runId, { limit: 20 }) as any
+      setTaskErrors(response.errors || [])
+    } catch {
+      setTaskErrors([])
+    } finally {
+      setErrorsLoading(false)
+    }
+  }
+
+  const loadTaskBundle = async (runId: string, silent = false) => {
+    await Promise.all([
+      loadTaskAndProgress(runId, silent),
+      loadReport(runId, true),
+      loadTaskErrors(runId, true),
+    ])
+  }
+
   useEffect(() => {
     if (id) {
       setReport(null)
       setProgress(null)
+      setTaskErrors([])
       loadTaskBundle(id)
     }
   }, [id])
@@ -142,8 +176,33 @@ export default function TaskDetail() {
       return
     }
     const timer = window.setInterval(() => {
-      loadTaskBundle(id, true)
-    }, 3000)
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      loadTaskAndProgress(id, true)
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [id, task?.status])
+
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+    if (
+      task?.status !== 'scheduled'
+      && task?.status !== 'pending'
+      && task?.status !== 'running'
+      && task?.status !== 'paused'
+    ) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      loadReport(id, true)
+      loadTaskErrors(id, true)
+    }, 20000)
     return () => window.clearInterval(timer)
   }, [id, task?.status])
 
@@ -247,7 +306,7 @@ export default function TaskDetail() {
       setReport((prev) => (prev ? { ...prev, task_name: nextName } : prev))
       setRenameOpen(false)
       message.success('任务名称已更新')
-      loadTaskBundle(id, true)
+      loadTaskAndProgress(id, true)
     } catch (error: any) {
       message.error(error.message || '更新任务名称失败')
     } finally {
@@ -298,6 +357,9 @@ export default function TaskDetail() {
         </Button>
         <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
           生成 HTML 报告
+        </Button>
+        <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id)}>
+          刷新分析
         </Button>
         {(task.status === 'scheduled' || task.status === 'pending') && (
           <>
@@ -365,6 +427,16 @@ export default function TaskDetail() {
         </Row>
       </Card>
 
+      {task.error_message && (
+        <Alert
+          type={task.status === 'cancelled' ? 'warning' : 'error'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={task.status === 'cancelled' ? '任务已取消' : '任务失败原因'}
+          description={task.error_message}
+        />
+      )}
+
       <Modal
         title="修改任务名称"
         open={renameOpen}
@@ -428,6 +500,43 @@ export default function TaskDetail() {
           </Col>
         </Row>
       </Card>
+
+      {(taskErrors.length > 0 || errorsLoading) && (
+        <Card
+          title="错误明细"
+          extra={(
+            <Button size="small" loading={errorsLoading} onClick={() => id && loadTaskErrors(id)}>
+              刷新错误
+            </Button>
+          )}
+          style={{ marginBottom: 16 }}
+        >
+          <Table
+            size="small"
+            rowKey="id"
+            loading={errorsLoading}
+            pagination={false}
+            scroll={{ x: 900 }}
+            dataSource={taskErrors}
+            columns={[
+              { title: '执行器', dataIndex: 'executor_id', key: 'executor_id', width: 140 },
+              { title: 'Provider', dataIndex: 'provider', key: 'provider', width: 120 },
+              { title: '模型', dataIndex: 'model', key: 'model', width: 180 },
+              { title: '状态码', dataIndex: ['error', 'status_code'], key: 'status_code', width: 90 },
+              { title: '错误类型', dataIndex: ['error', 'error_type'], key: 'error_type', width: 150 },
+              {
+                title: '错误信息',
+                key: 'error_message',
+                render: (_value: unknown, record: any) => (
+                  <Typography.Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>
+                    {record.error?.error_message || '-'}
+                  </Typography.Paragraph>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
 
       <Card title="执行拓扑与进度" style={{ marginBottom: 16 }}>
         {topology.nodes.length > 0 ? (

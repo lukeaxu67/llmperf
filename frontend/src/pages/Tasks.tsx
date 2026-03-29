@@ -69,15 +69,16 @@ export default function Tasks() {
     }
 
     const interval = setInterval(async () => {
-      for (const task of activeTasks) {
-        try {
-          const progress = await taskApi.getProgress(task.run_id) as any
-          setProgressMap((prev) => ({ ...prev, [task.run_id]: progress }))
-        } catch {
-          // ignore polling errors
-        }
+      if (document.visibilityState !== 'visible') {
+        return
       }
-    }, 3000)
+      try {
+        const response = await taskApi.getProgressBatch(activeTasks.map((task) => task.run_id)) as any
+        setProgressMap((prev) => ({ ...prev, ...(response.items || {}) }))
+      } catch {
+        // ignore polling errors
+      }
+    }, 5000)
 
     return () => clearInterval(interval)
   }, [tasks])
@@ -253,6 +254,24 @@ export default function Tasks() {
       key: 'created_at',
       width: 160,
       render: (time: string) => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '-'),
+    },
+    {
+      title: '失败原因',
+      dataIndex: 'error_message',
+      key: 'error_message',
+      width: 320,
+      ellipsis: true,
+      render: (errorMessage: string | undefined, record: TaskWithCost) => {
+        if (record.status !== 'failed' && record.status !== 'cancelled') {
+          return '-'
+        }
+        const text = (errorMessage || '').trim() || '未记录失败原因'
+        return (
+          <Tooltip title={text}>
+            <span>{text}</span>
+          </Tooltip>
+        )
+      },
     },
     {
       title: '操作',

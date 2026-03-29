@@ -27,6 +27,7 @@ class RunORM(Base):
     config_content: Mapped[str] = mapped_column(Text, default="")
     completed_at: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str] = mapped_column(Text, default="")
+    normalized_status: Mapped[str] = mapped_column(String, default="pending", index=True)
     # Aggregated cost for this run
     total_cost: Mapped[float] = mapped_column(Float, default=0.0)
     currency: Mapped[str] = mapped_column(String, default="CNY")
@@ -108,10 +109,12 @@ class Database:
         Base.metadata.create_all(self.engine)
         self._ensure_cache_cost_column()
         self._ensure_run_snapshot_columns()
+        self._ensure_normalized_status_column()
         self._ensure_request_params_column()
         self._ensure_provider_column()
         self._ensure_pricing_history_table()
         self._ensure_execution_price_snapshot_columns()
+        self._ensure_execution_indexes()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def session(self) -> Session:
@@ -273,6 +276,42 @@ class Database:
         except Exception:
             pass
 
+    def _ensure_normalized_status_column(self) -> None:
+        try:
+            with self.engine.connect() as conn:
+                if not self._table_exists(conn, "runs"):
+                    return
+                pragma = conn.execute(text("PRAGMA table_info(runs);")) .fetchall()
+                existing = {col[1] for col in pragma}
+                if "normalized_status" not in existing:
+                    conn.execute(text("ALTER TABLE runs ADD COLUMN normalized_status TEXT DEFAULT 'pending'"))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_runs_normalized_status ON runs(normalized_status)"))
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE runs
+                            SET normalized_status = CASE
+                                WHEN lower(coalesce(status, 'pending')) IN ('scheduled','running','paused','completed','failed','cancelled')
+                                    THEN lower(coalesce(status, 'pending'))
+                                WHEN coalesce(completed_at, 0) > 0 AND lower(coalesce(error_message, '')) LIKE '%cancel%'
+                                    THEN 'cancelled'
+                                WHEN coalesce(completed_at, 0) > 0 AND length(trim(coalesce(error_message, ''))) > 0
+                                    THEN 'failed'
+                                WHEN coalesce(completed_at, 0) > 0
+                                    THEN 'completed'
+                                WHEN coalesce(started_at, 0) > 0
+                                    THEN 'running'
+                                WHEN coalesce(scheduled_at, 0) > strftime('%s','now')
+                                    THEN 'scheduled'
+                                ELSE 'pending'
+                            END
+                            """
+                        )
+                    )
+                    conn.commit()
+        except Exception:
+            pass
+
     def _ensure_execution_price_snapshot_columns(self) -> None:
         """Add price snapshot columns to executions table if not exists."""
         try:
@@ -293,6 +332,23 @@ class Database:
                     conn.execute(
                         text("ALTER TABLE executions ADD COLUMN cache_price_snapshot REAL DEFAULT 0.0")
                     )
+        except Exception:
+            pass
+
+    def _ensure_execution_indexes(self) -> None:
+        """Create indexes on executions table for common query patterns."""
+        try:
+            with self.engine.connect() as conn:
+                if not self._table_exists(conn, "executions"):
+                    return
+                existing = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'")).fetchall()}
+                if "idx_exec_run_executor" not in existing:
+                    conn.execute(text("CREATE INDEX idx_exec_run_executor ON executions(run_id, executor_id)"))
+                if "idx_exec_run_status" not in existing:
+                    conn.execute(text("CREATE INDEX idx_exec_run_status ON executions(run_id, status)"))
+                if "idx_exec_created_at" not in existing:
+                    conn.execute(text("CREATE INDEX idx_exec_created_at ON executions(created_at)"))
+                conn.commit()
         except Exception:
             pass
 
