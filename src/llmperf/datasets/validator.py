@@ -333,7 +333,7 @@ def validate_jsonl_content(content: str) -> ValidationResult:
     Returns:
         ValidationResult.
     """
-    import json
+    from .sources.jsonl import parse_jsonl_test_case
 
     test_cases: List[TestCase] = []
     parse_errors: List[ValidationError] = []
@@ -344,16 +344,8 @@ def validate_jsonl_content(content: str) -> ValidationResult:
             continue
 
         try:
-            data = json.loads(line)
-            test_case = TestCase.model_validate(data)
+            test_case = parse_jsonl_test_case(line, index=i)
             test_cases.append(test_case)
-        except json.JSONDecodeError as e:
-            parse_errors.append(ValidationError(
-                field="json",
-                message=f"JSON parse error: {e}",
-                severity="error",
-                record_index=i,
-            ))
         except Exception as e:
             parse_errors.append(ValidationError(
                 field="validation",

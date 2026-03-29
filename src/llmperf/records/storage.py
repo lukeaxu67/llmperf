@@ -507,6 +507,24 @@ class Storage:
             session.commit()
             return True
 
+    def update_run_config_snapshot(
+        self,
+        run_id: str,
+        *,
+        cfg: RunConfig,
+        config_content: str,
+        config_path: str = "",
+    ) -> bool:
+        with self.db.session() as session:
+            run = session.query(RunORM).filter(RunORM.id == run_id).first()
+            if not run:
+                return False
+            run.info = cfg.info
+            run.config_content = config_content
+            run.config_path = config_path
+            session.commit()
+            return True
+
     def mark_run_completed(self, run_id: str, completed_at: Optional[int] = None) -> None:
         """Record run completion timestamp."""
         with self.db.session() as session:

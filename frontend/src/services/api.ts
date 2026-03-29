@@ -179,6 +179,36 @@ export interface Dataset {
   updated_at?: number
   format?: string
   encoding?: string
+  source?: string
+  read_only?: boolean
+}
+
+export interface DatasetValidationResult {
+  valid: boolean
+  file_type: string
+  row_count: number
+  columns: string[]
+  preview_records: Array<Record<string, any>>
+  encoding: string
+}
+
+export interface RuntimeExecutorConfig {
+  id: string
+  name: string
+  provider?: string
+  model?: string | null
+  concurrency: number
+  api_key: string
+  after: string[]
+}
+
+export interface TaskRuntimeConfig {
+  run_id: string
+  status: string
+  multiprocess: {
+    max_workers?: number | null
+  }
+  executors: RuntimeExecutorConfig[]
 }
 
 export interface ConfigTemplate {
@@ -289,6 +319,22 @@ export const taskApi = {
   getConfig: (runId: string) =>
     api.get<{ run_id: string; config_content: string }>(`/tasks/${runId}/config`),
 
+  getRuntimeConfig: (runId: string) =>
+    api.get<TaskRuntimeConfig>(`/tasks/${runId}/runtime-config`),
+
+  updateRuntimeConfig: (
+    runId: string,
+    data: {
+      max_workers?: number
+      executors: Array<{
+        id: string
+        concurrency?: number
+        api_key?: string
+        after?: string[]
+      }>
+    },
+  ) => api.patch<TaskRuntimeConfig>(`/tasks/${runId}/runtime-config`, data),
+
   delete: (runId: string) =>
     api.delete(`/tasks/${runId}`),
 
@@ -346,17 +392,29 @@ export const datasetApi = {
   preview: (datasetId: string, limit: number = 10) =>
     api.get(`/datasets/${datasetId}/preview`, { params: { limit } }),
 
-  validate: (file: File) => {
+  validate: (file: File, options?: { encoding?: string }) => {
     const formData = new FormData()
     formData.append('file', file)
-    return api.post('/datasets/validate', formData, {
+    formData.append('encoding', options?.encoding || 'utf-8')
+    return api.post<DatasetValidationResult>('/datasets/validate', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
 
-  upload: (file: File, onProgress?: (progress: number) => void) => {
+  upload: (
+    file: File,
+    options?: {
+      name?: string
+      description?: string
+      encoding?: string
+    },
+    onProgress?: (progress: number) => void,
+  ) => {
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('name', options?.name || '')
+    formData.append('description', options?.description || '')
+    formData.append('encoding', options?.encoding || 'utf-8')
     return api.post('/datasets/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (progressEvent) => {
@@ -370,6 +428,9 @@ export const datasetApi = {
 
   delete: (datasetId: string) =>
     api.delete(`/datasets/${datasetId}`),
+
+  update: (datasetId: string, data: { name?: string; description?: string }) =>
+    api.patch<Dataset>(`/datasets/${datasetId}`, data),
 }
 
 export const configApi = {

@@ -1,21 +1,39 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List
 
-from ..types import TestCase
+from ..types import Message, TestCase
 from ..dataset_source import DatasetSource
 from ..dataset_source_registry import register_source
+
+
+def parse_jsonl_test_case(raw_line: str, index: int = 0) -> TestCase:
+    data = json.loads(raw_line)
+    row_id = f"row-{index + 1}"
+
+    if isinstance(data, list):
+        messages = [Message.model_validate(item) for item in data]
+        return TestCase(id=row_id, messages=messages)
+
+    if isinstance(data, dict):
+        normalized = dict(data)
+        if "messages" in normalized and not normalized.get("id"):
+            normalized["id"] = row_id
+        return TestCase.model_validate(normalized)
+
+    raise ValueError("Each JSONL line must be a TestCase object or a message array")
 
 
 def _load_from_path(path: Path, encoding: str, limit: int | None) -> List[TestCase]:
     items: List[TestCase] = []
     with path.open("r", encoding=encoding) as fh:
-        for line in fh:
+        for index, line in enumerate(fh):
             stripped = line.strip()
             if not stripped:
                 continue
-            test_case = TestCase.model_validate_json(stripped)
+            test_case = parse_jsonl_test_case(stripped, index=index)
             items.append(test_case)
             if limit and len(items) >= limit:
                 break

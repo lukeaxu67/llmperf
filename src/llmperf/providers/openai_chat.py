@@ -6,7 +6,7 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
-from openai import APIStatusError, OpenAI
+from openai import APIStatusError, DefaultHttpxClient, OpenAI
 
 from ..records.model import RunRecord, now_ms
 from .base import BaseProvider, ProviderRequest, normalize_messages, register_provider
@@ -117,6 +117,10 @@ class OpenAIChatProvider(BaseProvider):
             base_url=base_url,
             timeout=timeout,
             default_headers=default_headers,
+            http_client=DefaultHttpxClient(
+                timeout=timeout,
+                trust_env=False,
+            ),
         )
 
     def handle_special_chunk(self, chunk, record: RunRecord) -> bool:

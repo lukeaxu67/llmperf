@@ -58,6 +58,25 @@ class TaskRenameRequest(BaseModel):
     task_name: str = Field(..., min_length=1, description="New task name")
 
 
+class RuntimeExecutorUpdate(BaseModel):
+    id: str = Field(..., min_length=1)
+    concurrency: Optional[int] = Field(None, ge=1)
+    api_key: Optional[str] = None
+    after: Optional[List[str]] = None
+
+
+class TaskRuntimeConfigRequest(BaseModel):
+    executors: List[RuntimeExecutorUpdate] = Field(default_factory=list)
+    max_workers: Optional[int] = Field(None, ge=1)
+
+
+class TaskRuntimeConfigResponse(BaseModel):
+    run_id: str
+    status: str
+    multiprocess: Dict[str, Any] = Field(default_factory=dict)
+    executors: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class TaskListResponse(BaseModel):
     """Response for task list."""
     tasks: List[TaskInfo]
@@ -351,6 +370,44 @@ async def get_task_config(run_id: str):
     if not config_content:
         raise HTTPException(status_code=404, detail="Task config not found")
     return TaskConfigResponse(run_id=run_id, config_content=config_content)
+
+
+@router.get(
+    "/{run_id}/runtime-config",
+    response_model=TaskRuntimeConfigResponse,
+    summary="Get editable runtime config fields",
+)
+async def get_task_runtime_config(run_id: str):
+    service = get_service()
+    runtime_config = service.get_runtime_editable_config(run_id)
+    if not runtime_config:
+        raise HTTPException(status_code=404, detail="Task config not found")
+    return TaskRuntimeConfigResponse(**runtime_config)
+
+
+@router.patch(
+    "/{run_id}/runtime-config",
+    response_model=TaskRuntimeConfigResponse,
+    summary="Update editable runtime config fields",
+)
+async def update_task_runtime_config(
+    run_id: str,
+    request: TaskRuntimeConfigRequest = Body(...),
+):
+    service = get_service()
+    try:
+        updated = service.update_runtime_config(
+            run_id,
+            executor_updates=[item.model_dump(exclude_none=True) for item in request.executors],
+            max_workers=request.max_workers,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not updated:
+        raise HTTPException(status_code=404, detail="Task config not found")
+
+    return TaskRuntimeConfigResponse(**updated)
 
 
 @router.get(

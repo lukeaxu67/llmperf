@@ -28,6 +28,14 @@ def _default_log_level() -> str:
     return os.getenv("LLMPerf_LOG_LEVEL", "INFO").upper()
 
 
+def _default_datasets_dir() -> Path:
+    env_dir = os.getenv("LLMPerf_DATASETS_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    home = Path(os.getenv("USERPROFILE") or os.getenv("HOME") or ".").expanduser()
+    return (home / "llmperf" / "datasets").resolve()
+
+
 class RuntimeConfig(BaseModel):
     """Runtime configuration for LLMPerf.
 
@@ -43,6 +51,9 @@ class RuntimeConfig(BaseModel):
     log_dir: Path = Field(default_factory=_default_log_dir)
     """Directory for log files."""
 
+    datasets_dir: Path = Field(default_factory=_default_datasets_dir)
+    """Directory for runtime uploaded datasets."""
+
     log_level: str = Field(default_factory=_default_log_level)
     """Logging level."""
 
@@ -52,7 +63,7 @@ class RuntimeConfig(BaseModel):
     cache_ttl_seconds: int = Field(default=3600)
     """Cache time-to-live in seconds."""
 
-    @field_validator("db_path", "log_dir", mode="before")
+    @field_validator("db_path", "log_dir", "datasets_dir", mode="before")
     @classmethod
     def _expand_path(cls, value: Path | str) -> Path:
         return Path(value).expanduser().resolve()
@@ -101,6 +112,8 @@ def load_runtime_config(overrides: Optional[dict] = None) -> RuntimeConfig:
         config_data["db_path"] = os.getenv("LLMPerf_DB_PATH")
     if os.getenv("LLMPerf_LOG_DIR"):
         config_data["log_dir"] = os.getenv("LLMPerf_LOG_DIR")
+    if os.getenv("LLMPerf_DATASETS_DIR"):
+        config_data["datasets_dir"] = os.getenv("LLMPerf_DATASETS_DIR")
     if os.getenv("LLMPerf_LOG_LEVEL"):
         config_data["log_level"] = os.getenv("LLMPerf_LOG_LEVEL")
 

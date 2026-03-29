@@ -7,7 +7,10 @@ import {
   Col,
   Descriptions,
   Empty,
+  Form,
   Input,
+  InputNumber,
+  message,
   Modal,
   Progress,
   Row,
@@ -18,7 +21,6 @@ import {
   Table,
   Tag,
   Typography,
-  message,
 } from 'antd'
 import {
   ArrowLeftOutlined,
@@ -31,13 +33,20 @@ import {
   SyncOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import ExecutorTopologyGraph from '@/components/ExecutorTopologyGraph'
 import StatusTag from '@/components/StatusTag'
 import TaskProgressBar from '@/components/TaskProgressBar'
-import ExecutorTopologyGraph from '@/components/ExecutorTopologyGraph'
-import { DetailedReport, ExecutorProgress, taskApi, Task, TaskProgress } from '@/services/api'
+import {
+  DetailedReport,
+  ExecutorProgress,
+  Task,
+  TaskProgress,
+  TaskRuntimeConfig,
+  taskApi,
+} from '@/services/api'
 import { mergeTopologyProgress } from '@/utils/executorTopology'
 
-const { Title, Text } = Typography
+const { Paragraph, Text, Title } = Typography
 
 function formatDelta(current: number, baseline?: number, reverse = false): string {
   if (baseline === undefined || baseline === null || baseline === 0) {
@@ -69,8 +78,6 @@ function executorStatusColor(status: string): string {
       return 'warning'
     case 'failed':
       return 'error'
-    case 'cancelled':
-      return 'default'
     case 'blocked':
       return 'orange'
     default:
@@ -85,13 +92,20 @@ export default function TaskDetail() {
   const [task, setTask] = useState<Task | null>(null)
   const [progress, setProgress] = useState<TaskProgress | null>(null)
   const [report, setReport] = useState<DetailedReport | null>(null)
+  const [taskErrors, setTaskErrors] = useState<any[]>([])
+  const [reportLoading, setReportLoading] = useState(false)
+  const [errorsLoading, setErrorsLoading] = useState(false)
   const [baselineId, setBaselineId] = useState<string>()
+
   const [renameOpen, setRenameOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [renaming, setRenaming] = useState(false)
-  const [reportLoading, setReportLoading] = useState(false)
-  const [errorsLoading, setErrorsLoading] = useState(false)
-  const [taskErrors, setTaskErrors] = useState<any[]>([])
+
+  const [runtimeConfigOpen, setRuntimeConfigOpen] = useState(false)
+  const [runtimeConfigLoading, setRuntimeConfigLoading] = useState(false)
+  const [runtimeConfigSaving, setRuntimeConfigSaving] = useState(false)
+  const [runtimeConfig, setRuntimeConfig] = useState<TaskRuntimeConfig | null>(null)
+  const [runtimeForm] = Form.useForm()
 
   const loadTaskAndProgress = async (runId: string, silent = false) => {
     if (!silent) {
@@ -155,56 +169,41 @@ export default function TaskDetail() {
   }
 
   useEffect(() => {
-    if (id) {
-      setReport(null)
-      setProgress(null)
-      setTaskErrors([])
-      loadTaskBundle(id)
+    if (!id) {
+      return
     }
+    setProgress(null)
+    setReport(null)
+    setTaskErrors([])
+    void loadTaskBundle(id)
   }, [id])
 
   useEffect(() => {
     if (!id) {
       return
     }
-    if (
-      task?.status !== 'scheduled'
-      && task?.status !== 'pending'
-      && task?.status !== 'running'
-      && task?.status !== 'paused'
-    ) {
+    if (!task || !['scheduled', 'pending', 'running', 'paused'].includes(task.status)) {
       return
     }
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') {
-        return
-      }
-      loadTaskAndProgress(id, true)
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [id, task?.status])
 
-  useEffect(() => {
-    if (!id) {
-      return
-    }
-    if (
-      task?.status !== 'scheduled'
-      && task?.status !== 'pending'
-      && task?.status !== 'running'
-      && task?.status !== 'paused'
-    ) {
-      return
-    }
-    const timer = window.setInterval(() => {
-      if (document.visibilityState !== 'visible') {
-        return
+    const fastTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadTaskAndProgress(id, true)
       }
-      loadReport(id, true)
-      loadTaskErrors(id, true)
+    }, 5000)
+
+    const slowTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void loadReport(id, true)
+        void loadTaskErrors(id, true)
+      }
     }, 20000)
-    return () => window.clearInterval(timer)
-  }, [id, task?.status])
+
+    return () => {
+      window.clearInterval(fastTimer)
+      window.clearInterval(slowTimer)
+    }
+  }, [id, task])
 
   useEffect(() => {
     if (!baselineId && report?.executor_summary?.length) {
@@ -218,7 +217,7 @@ export default function TaskDetail() {
       if (format === 'html') {
         const result = await taskApi.export(id, 'html') as any
         if (result.output_path) {
-          message.success(`报告已生成到 ${result.output_path}`)
+          message.success(`HTML 报告已生成到 ${result.output_path}`)
         }
         return
       }
@@ -242,7 +241,7 @@ export default function TaskDetail() {
     try {
       await taskApi.pause(id)
       message.success('任务已暂停')
-      loadTaskBundle(id, true)
+      await loadTaskBundle(id, true)
     } catch (error: any) {
       message.error(error.message || '暂停失败')
     }
@@ -253,7 +252,7 @@ export default function TaskDetail() {
     try {
       await taskApi.resume(id)
       message.success('任务已恢复')
-      loadTaskBundle(id, true)
+      await loadTaskBundle(id, true)
     } catch (error: any) {
       message.error(error.message || '恢复失败')
     }
@@ -263,10 +262,10 @@ export default function TaskDetail() {
     if (!id) return
     try {
       await taskApi.stop(id)
-      message.success('任务已停止')
-      loadTaskBundle(id, true)
+      message.success('任务已取消')
+      await loadTaskBundle(id, true)
     } catch (error: any) {
-      message.error(error.message || '停止失败')
+      message.error(error.message || '取消失败')
     }
   }
 
@@ -275,7 +274,7 @@ export default function TaskDetail() {
     try {
       await taskApi.start(id)
       message.success('任务已开始执行')
-      loadTaskBundle(id, true)
+      await loadTaskBundle(id, true)
     } catch (error: any) {
       message.error(error.message || '立即启动失败')
     }
@@ -286,7 +285,7 @@ export default function TaskDetail() {
     try {
       await taskApi.recover(id)
       message.success('任务已恢复执行，将继续补齐未完成部分')
-      loadTaskBundle(id, true)
+      await loadTaskBundle(id, true)
     } catch (error: any) {
       message.error(error.message || '恢复执行失败')
     }
@@ -306,11 +305,67 @@ export default function TaskDetail() {
       setReport((prev) => (prev ? { ...prev, task_name: nextName } : prev))
       setRenameOpen(false)
       message.success('任务名称已更新')
-      loadTaskAndProgress(id, true)
+      await loadTaskAndProgress(id, true)
     } catch (error: any) {
       message.error(error.message || '更新任务名称失败')
     } finally {
       setRenaming(false)
+    }
+  }
+
+  const openRuntimeConfigEditor = async () => {
+    if (!id) return
+    try {
+      setRuntimeConfigLoading(true)
+      const response = await taskApi.getRuntimeConfig(id) as any
+      const nextConfig = response as TaskRuntimeConfig
+      setRuntimeConfig(nextConfig)
+      runtimeForm.setFieldsValue({
+        max_workers: nextConfig.multiprocess?.max_workers ?? undefined,
+        executors: nextConfig.executors.map((executor) => ({
+          id: executor.id,
+          name: executor.name,
+          provider: executor.provider,
+          model: executor.model,
+          concurrency: executor.concurrency,
+          api_key: executor.api_key || '',
+          after: executor.after || [],
+        })),
+      })
+      setRuntimeConfigOpen(true)
+    } catch (error: any) {
+      message.error(error.message || '获取可编辑运行配置失败')
+    } finally {
+      setRuntimeConfigLoading(false)
+    }
+  }
+
+  const handleSaveRuntimeConfig = async () => {
+    if (!id) return
+    try {
+      const values = await runtimeForm.validateFields()
+      setRuntimeConfigSaving(true)
+      const payload = {
+        max_workers: values.max_workers,
+        executors: (values.executors || []).map((executor: any) => ({
+          id: executor.id,
+          concurrency: executor.concurrency,
+          ...(String(executor.api_key || '').trim() ? { api_key: String(executor.api_key).trim() } : {}),
+          after: Array.isArray(executor.after) ? executor.after : [],
+        })),
+      }
+      const updated = await taskApi.updateRuntimeConfig(id, payload) as any
+      setRuntimeConfig(updated as TaskRuntimeConfig)
+      setRuntimeConfigOpen(false)
+      message.success('运行时配置已更新')
+      await loadTaskBundle(id, true)
+    } catch (error: any) {
+      if (error?.errorFields) {
+        return
+      }
+      message.error(error.message || '更新运行时配置失败')
+    } finally {
+      setRuntimeConfigSaving(false)
     }
   }
 
@@ -337,15 +392,13 @@ export default function TaskDetail() {
     return <Empty description="任务不存在" />
   }
 
-  const tableData = executorItems.map((item) => ({
-    key: item.id,
-    ...item,
-  }))
-  const canRenameTask = task.status !== 'running' && task.status !== 'paused'
+  const tableData = executorItems.map((item) => ({ key: item.id, ...item }))
+  const canRenameTask = !['running', 'paused'].includes(task.status)
+  const canEditRuntimeConfig = !['running', 'paused'].includes(task.status)
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
+      <Space style={{ marginBottom: 16 }} wrap>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
           返回列表
         </Button>
@@ -359,28 +412,47 @@ export default function TaskDetail() {
           生成 HTML 报告
         </Button>
         <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id)}>
-          刷新分析
+          刷新报告
         </Button>
+        {canEditRuntimeConfig && (
+          <Button icon={<EditOutlined />} loading={runtimeConfigLoading} onClick={openRuntimeConfigEditor}>
+            编辑运行配置
+          </Button>
+        )}
         {(task.status === 'scheduled' || task.status === 'pending') && (
           <>
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStartNow}>立即启动</Button>
-            <Button danger icon={<StopOutlined />} onClick={handleStop}>取消任务</Button>
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleStartNow}>
+              立即启动
+            </Button>
+            <Button danger icon={<StopOutlined />} onClick={handleStop}>
+              取消任务
+            </Button>
           </>
         )}
         {task.status === 'running' && (
           <>
-            <Button icon={<PauseCircleOutlined />} onClick={handlePause}>暂停</Button>
-            <Button danger icon={<StopOutlined />} onClick={handleStop}>停止</Button>
+            <Button icon={<PauseCircleOutlined />} onClick={handlePause}>
+              暂停
+            </Button>
+            <Button danger icon={<StopOutlined />} onClick={handleStop}>
+              停止
+            </Button>
           </>
         )}
         {task.status === 'paused' && (
           <>
-            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleResume}>恢复</Button>
-            <Button danger icon={<StopOutlined />} onClick={handleStop}>停止</Button>
+            <Button type="primary" icon={<PlayCircleOutlined />} onClick={handleResume}>
+              恢复
+            </Button>
+            <Button danger icon={<StopOutlined />} onClick={handleStop}>
+              停止
+            </Button>
           </>
         )}
         {(task.status === 'failed' || task.status === 'cancelled') && (
-          <Button type="primary" icon={<SyncOutlined />} onClick={handleRecover}>恢复执行</Button>
+          <Button type="primary" icon={<SyncOutlined />} onClick={handleRecover}>
+            恢复续跑
+          </Button>
         )}
       </Space>
 
@@ -405,12 +477,15 @@ export default function TaskDetail() {
             </Space>
             <Space size="middle" style={{ marginTop: 8 }} wrap>
               <StatusTag status={task.status as any} />
-              <Text type="secondary">Run ID: {task.run_id}</Text>
               {task.scheduled_at && (
-                <Text type="secondary">计划执行时间: {dayjs(task.scheduled_at).format('YYYY-MM-DD HH:mm:ss')}</Text>
+                <Text type="secondary">
+                  计划执行时间: {dayjs(task.scheduled_at).format('YYYY-MM-DD HH:mm:ss')}
+                </Text>
               )}
               {report?.generated_at && (
-                <Text type="secondary">报告生成时间: {dayjs(report.generated_at).format('YYYY-MM-DD HH:mm:ss')}</Text>
+                <Text type="secondary">
+                  报告生成时间: {dayjs(report.generated_at).format('YYYY-MM-DD HH:mm:ss')}
+                </Text>
               )}
             </Space>
           </Col>
@@ -444,21 +519,110 @@ export default function TaskDetail() {
         okText="保存"
         cancelText="取消"
         confirmLoading={renaming}
-        onCancel={() => {
-          if (!renaming) {
-            setRenameOpen(false)
-          }
-        }}
+        onCancel={() => !renaming && setRenameOpen(false)}
       >
         <Input
           maxLength={120}
           value={renameValue}
           onChange={(event) => setRenameValue(event.target.value)}
           placeholder="输入任务名称"
-          onPressEnter={() => {
-            void handleRename()
-          }}
+          onPressEnter={() => void handleRename()}
         />
+      </Modal>
+
+      <Modal
+        title="编辑运行时配置"
+        open={runtimeConfigOpen}
+        width={920}
+        okText="保存配置"
+        cancelText="取消"
+        confirmLoading={runtimeConfigSaving}
+        onOk={handleSaveRuntimeConfig}
+        onCancel={() => !runtimeConfigSaving && setRuntimeConfigOpen(false)}
+      >
+        {runtimeConfig ? (
+          <Form form={runtimeForm} layout="vertical">
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message="这里只开放安全修改项"
+              description="可修改项包括执行器并发、API Key、前置依赖 after，以及全局 max_workers。数据集、执行器 ID、Provider、模型等核心配置保持不变，用于保证续跑时复用已有结果。"
+            />
+            <Form.Item label="全局 max_workers" name="max_workers">
+              <InputNumber min={1} style={{ width: '100%' }} placeholder="留空表示沿用原配置" />
+            </Form.Item>
+            <Form.List name="executors">
+              {(fields) => (
+                <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                  {fields.map((field) => (
+                    <Card
+                      key={field.key}
+                      size="small"
+                      title={runtimeForm.getFieldValue(['executors', field.name, 'name']) || `Executor ${field.name + 1}`}
+                    >
+                      <Form.Item name={[field.name, 'id']} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item name={[field.name, 'name']} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item name={[field.name, 'provider']} hidden>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item name={[field.name, 'model']} hidden>
+                        <Input />
+                      </Form.Item>
+
+                      <Row gutter={16}>
+                        <Col span={8}>
+                          <Form.Item label="Provider / 模型">
+                            <Text type="secondary">
+                              {runtimeForm.getFieldValue(['executors', field.name, 'provider']) || '-'}
+                              {' / '}
+                              {runtimeForm.getFieldValue(['executors', field.name, 'model']) || '-'}
+                            </Text>
+                          </Form.Item>
+                        </Col>
+                        <Col span={4}>
+                          <Form.Item
+                            label="并发"
+                            name={[field.name, 'concurrency']}
+                            rules={[{ required: true, message: '请输入并发' }]}
+                          >
+                            <InputNumber min={1} style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="API Key" name={[field.name, 'api_key']}>
+                            <Input.Password placeholder="留空表示沿用原配置" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item label="前置执行器 after" name={[field.name, 'after']}>
+                        <Select
+                          mode="multiple"
+                          allowClear
+                          placeholder="选择前置执行器"
+                          options={(runtimeConfig?.executors || [])
+                            .filter((executor) => executor.id !== runtimeForm.getFieldValue(['executors', field.name, 'id']))
+                            .map((executor) => ({
+                              label: `${executor.name} (${executor.id})`,
+                              value: executor.id,
+                            }))}
+                        />
+                      </Form.Item>
+                    </Card>
+                  ))}
+                </Space>
+              )}
+            </Form.List>
+          </Form>
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+            <Spin />
+          </div>
+        )}
       </Modal>
 
       {(task.status === 'running' || task.status === 'paused' || report?.is_partial) && (
@@ -466,8 +630,8 @@ export default function TaskDetail() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="报告基于当前已落库数据实时重算"
-          description="任务未跑完时也会展示阶段性指标和执行器结论，页面每次请求都会重新计算，不使用缓存。"
+          message="当前报告基于已落库数据实时计算"
+          description="即使任务还没有完全跑完，页面也会展示阶段性指标、执行器结论和错误分布。每次请求都会重新计算，不使用缓存。"
         />
       )}
 
@@ -481,7 +645,7 @@ export default function TaskDetail() {
 
         <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
           <Col span={4}>
-            <Statistic title="总请求" value={report?.metrics.total_requests || progress?.completed || 0} />
+            <Statistic title="总请求数" value={report?.metrics.total_requests || progress?.completed || 0} />
           </Col>
           <Col span={4}>
             <Statistic title="成功率" value={report?.metrics.success_rate || 0} precision={1} suffix="%" />
@@ -516,7 +680,7 @@ export default function TaskDetail() {
             rowKey="id"
             loading={errorsLoading}
             pagination={false}
-            scroll={{ x: 900 }}
+            scroll={{ x: 960 }}
             dataSource={taskErrors}
             columns={[
               { title: '执行器', dataIndex: 'executor_id', key: 'executor_id', width: 140 },
@@ -528,9 +692,9 @@ export default function TaskDetail() {
                 title: '错误信息',
                 key: 'error_message',
                 render: (_value: unknown, record: any) => (
-                  <Typography.Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>
+                  <Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 2, expandable: true, symbol: '展开' }}>
                     {record.error?.error_message || '-'}
-                  </Typography.Paragraph>
+                  </Paragraph>
                 ),
               },
             ]}
@@ -549,9 +713,7 @@ export default function TaskDetail() {
                     <Space direction="vertical" style={{ width: '100%' }} size={8}>
                       <Space wrap>
                         <Text strong>{executor.name}</Text>
-                        <Tag color={executorStatusColor(executor.status)}>
-                          {executor.status}
-                        </Tag>
+                        <Tag color={executorStatusColor(executor.status)}>{executor.status}</Tag>
                       </Space>
                       <Progress
                         percent={Math.round(executor.progress_percent)}
@@ -594,18 +756,18 @@ export default function TaskDetail() {
             size="small"
             dataSource={tableData}
             pagination={false}
-            scroll={{ x: 1500 }}
+            scroll={{ x: 1520 }}
             columns={[
               {
                 title: '执行器',
                 dataIndex: 'name',
                 fixed: 'left',
-                width: 220,
+                width: 240,
                 render: (_value, record: ExecutorProgress) => (
                   <Space direction="vertical" size={4}>
                     <Space wrap>
                       <Text strong>{record.name}</Text>
-                      <Tag color={record.id === baseline?.id ? 'blue' : 'default'}>
+                      <Tag color={record.id === baseline?.id ? 'blue' : executorStatusColor(record.status)}>
                         {record.id === baseline?.id ? '基准' : record.status}
                       </Tag>
                     </Space>
@@ -638,18 +800,8 @@ export default function TaskDetail() {
                   </Text>
                 ),
               },
-              {
-                title: '尾响(ms)',
-                dataIndex: 'avg_total_time',
-                width: 120,
-                render: (value: number) => value.toFixed(0),
-              },
-              {
-                title: 'token速率(不带首响)',
-                dataIndex: 'avg_token_per_second',
-                width: 160,
-                render: (value: number) => value.toFixed(2),
-              },
+              { title: '尾响(ms)', dataIndex: 'avg_total_time', width: 120, render: (value: number) => value.toFixed(0) },
+              { title: 'token速率(不带首响)', dataIndex: 'avg_token_per_second', width: 160, render: (value: number) => value.toFixed(2) },
               {
                 title: 'token速率(带首响)',
                 dataIndex: 'avg_token_per_second_with_calltime',

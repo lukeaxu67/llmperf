@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from openai import APIStatusError, OpenAI
+from openai import APIStatusError, DefaultHttpxClient, OpenAI
 
 from ..records.model import RunRecord, now_ms
 from .base import BaseProvider, ProviderRequest, normalize_messages, register_provider
@@ -110,6 +110,10 @@ class ResponsesProvider(BaseProvider):
             base_url=base_url,
             timeout=options.get("timeout", 60),
             default_headers=options.get("default_headers"),
+            http_client=DefaultHttpxClient(
+                timeout=options.get("timeout", 60),
+                trust_env=False,
+            ),
         )
 
     def invoke(self, request: ProviderRequest) -> RunRecord:

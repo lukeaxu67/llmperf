@@ -11,6 +11,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from llmperf.config.runtime import load_runtime_config
+from llmperf.datasets.sources.jsonl import parse_jsonl_test_case
+from llmperf.datasets.validator import validate_jsonl_content
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +38,8 @@ class DatasetMetadata:
     updated_at: int = 0
     file_size: int = 0
     encoding: str = "utf-8"
+    source: str = "runtime"
+    read_only: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -48,6 +54,8 @@ class DatasetMetadata:
             "updated_at": self.updated_at,
             "file_size": self.file_size,
             "encoding": self.encoding,
+            "source": self.source,
+            "read_only": self.read_only,
         }
 
     @classmethod
@@ -66,6 +74,8 @@ class DatasetMetadata:
             updated_at=data.get("updated_at", 0),
             file_size=data.get("file_size", 0),
             encoding=data.get("encoding", "utf-8"),
+            source=data.get("source", "runtime"),
+            read_only=data.get("read_only", False),
         )
 
 
@@ -79,30 +89,47 @@ class DatasetService:
     - Dataset preview
     """
 
-    def __init__(self, datasets_dir: Optional[str | Path] = None):
+    def __init__(
+        self,
+        datasets_dir: Optional[str | Path] = None,
+        preset_datasets_dir: Optional[str | Path] = None,
+    ):
         """Initialize dataset service.
 
         Args:
             datasets_dir: Directory to store datasets. Defaults to data/datasets/
         """
-        if datasets_dir is None:
-            # Default to project root / data / datasets
-            project_root = Path(__file__).parent.parent.parent.parent.parent
-            datasets_dir = project_root / "data" / "datasets"
-            self._project_root = project_root
-        else:
-            self._project_root = Path(datasets_dir).resolve().parent.parent
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        self._project_root = project_root
 
-        self._datasets_dir = Path(datasets_dir)
+        if datasets_dir is None:
+            runtime = load_runtime_config()
+            self._datasets_dir = runtime.datasets_dir
+            self._preset_datasets_dir = Path(preset_datasets_dir).resolve() if preset_datasets_dir else (project_root / "data" / "datasets")
+        else:
+            self._datasets_dir = Path(datasets_dir).resolve()
+            self._preset_datasets_dir = Path(preset_datasets_dir).resolve() if preset_datasets_dir else self._datasets_dir
+
         self._datasets_dir.mkdir(parents=True, exist_ok=True)
+        if self._preset_datasets_dir != self._datasets_dir:
+            self._preset_datasets_dir.mkdir(parents=True, exist_ok=True)
+
+        self._scan_dirs: List[Path] = [self._datasets_dir]
+        if self._preset_datasets_dir not in self._scan_dirs:
+            self._scan_dirs.append(self._preset_datasets_dir)
 
         # Cache for metadata
         self._metadata_cache: Dict[str, DatasetMetadata] = {}
+        self._metadata_roots: Dict[str, Path] = {}
         self._cache_loaded = False
 
-        logger.info(f"Dataset service initialized with directory: {self._datasets_dir}")
+        logger.info(
+            "Dataset service initialized with runtime dir=%s preset dir=%s",
+            self._datasets_dir,
+            self._preset_datasets_dir,
+        )
 
-    def _get_meta_path(self, dataset_id: str) -> Path:
+    def _get_meta_path(self, dataset_id: str, base_dir: Optional[Path] = None) -> Path:
         """Get metadata file path for a dataset.
 
         Args:
@@ -111,9 +138,10 @@ class DatasetService:
         Returns:
             Path to metadata file.
         """
-        return self._datasets_dir / f"{dataset_id}.meta.json"
+        target_dir = base_dir or self._datasets_dir
+        return target_dir / f"{dataset_id}.meta.json"
 
-    def _get_data_path(self, dataset_id: str, file_type: DatasetType) -> Path:
+    def _get_data_path(self, dataset_id: str, file_type: DatasetType, base_dir: Optional[Path] = None) -> Path:
         """Get data file path for a dataset.
 
         Args:
@@ -123,17 +151,19 @@ class DatasetService:
         Returns:
             Path to data file.
         """
-        return self._datasets_dir / f"{dataset_id}.{file_type.value}"
+        target_dir = base_dir or self._datasets_dir
+        return target_dir / f"{dataset_id}.{file_type.value}"
 
     def _resolve_data_path(self, metadata: DatasetMetadata) -> Path:
         """Resolve the actual dataset file from metadata."""
+        base_dir = self._metadata_roots.get(metadata.id or metadata.name, self._datasets_dir)
         if metadata.file_path:
             file_path = Path(metadata.file_path)
             if file_path.is_absolute():
                 return file_path
 
             candidates = [
-                self._datasets_dir / file_path,
+                base_dir / file_path,
                 self._project_root / file_path,
                 file_path,
             ]
@@ -142,7 +172,7 @@ class DatasetService:
                     return candidate
             return candidates[0]
 
-        return self._get_data_path(metadata.id, metadata.file_type)
+        return self._get_data_path(metadata.id, metadata.file_type, base_dir=base_dir)
 
     def _detect_file_type(self, filename: str) -> Optional[DatasetType]:
         """Detect file type from filename.
@@ -159,7 +189,7 @@ class DatasetService:
             return DatasetType.CSV
         return None
 
-    def _load_metadata(self, dataset_id: str) -> Optional[DatasetMetadata]:
+    def _load_metadata(self, dataset_id: str, meta_dir: Optional[Path] = None) -> Optional[DatasetMetadata]:
         """Load metadata from file.
 
         Args:
@@ -168,7 +198,8 @@ class DatasetService:
         Returns:
             DatasetMetadata or None.
         """
-        meta_path = self._get_meta_path(dataset_id)
+        meta_root = meta_dir or self._datasets_dir
+        meta_path = self._get_meta_path(dataset_id, base_dir=meta_root)
         if not meta_path.exists():
             return None
 
@@ -177,7 +208,10 @@ class DatasetService:
                 data = json.load(f)
             metadata = DatasetMetadata.from_dict(data, dataset_id=dataset_id)
             if not metadata.file_path:
-                metadata.file_path = self._get_data_path(dataset_id, metadata.file_type).name
+                metadata.file_path = self._get_data_path(dataset_id, metadata.file_type, base_dir=meta_root).name
+            metadata.source = "runtime" if meta_root == self._datasets_dir else "builtin"
+            metadata.read_only = meta_root != self._datasets_dir
+            self._metadata_roots[dataset_id] = meta_root
             return metadata
         except Exception as e:
             logger.warning("Failed to load metadata for %s: %s", dataset_id, e)
@@ -189,7 +223,8 @@ class DatasetService:
         Args:
             metadata: Metadata to save.
         """
-        meta_path = self._get_meta_path(metadata.id or metadata.name)
+        meta_root = self._metadata_roots.get(metadata.id or metadata.name, self._datasets_dir)
+        meta_path = self._get_meta_path(metadata.id or metadata.name, base_dir=meta_root)
         with meta_path.open("w", encoding="utf-8") as f:
             json.dump(metadata.to_dict(), f, indent=2, ensure_ascii=False)
 
@@ -240,6 +275,70 @@ class DatasetService:
             logger.warning("Failed to extract JSONL columns: %s", e)
         return sorted(columns)
 
+    @staticmethod
+    def _normalize_preview_jsonl_record(line: str, index: int) -> Dict[str, Any]:
+        test_case = parse_jsonl_test_case(line, index=index)
+        return test_case.model_dump()
+
+    def _analyze_dataset_content(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        encoding: str = "utf-8",
+    ) -> Dict[str, Any]:
+        file_type = self._detect_file_type(filename)
+        if not file_type:
+            raise ValueError(f"Unsupported file type: {filename}. Supported: .jsonl, .csv")
+
+        row_count = 0
+        columns: List[str] = []
+        preview_records: List[Dict[str, Any]] = []
+
+        try:
+            text = content.decode(encoding)
+        except UnicodeDecodeError as e:
+            raise ValueError(f"Failed to decode file with encoding {encoding}: {e}") from e
+
+        if file_type == DatasetType.JSONL:
+            validation = validate_jsonl_content(text)
+            if not validation.valid:
+                first_error = validation.errors[0].message if validation.errors else "Invalid JSONL content"
+                raise ValueError(first_error)
+            row_count = int(validation.statistics.get("total_records", 0))
+            columns = ["id", "messages"]
+            for index, line in enumerate(text.splitlines()):
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                preview_records.append(self._normalize_preview_jsonl_record(stripped, index))
+                if len(preview_records) >= 5:
+                    break
+        elif file_type == DatasetType.CSV:
+            temp_path = self._datasets_dir / f".tmp-validate-{int(time.time() * 1000)}.csv"
+            try:
+                temp_path.write_bytes(content)
+                row_count = self._count_csv_rows(temp_path, encoding)
+                columns = self._extract_csv_columns(temp_path, encoding)
+                with temp_path.open("r", encoding=encoding, newline="") as f:
+                    reader = csv.DictReader(f)
+                    for index, row in enumerate(reader):
+                        preview_records.append(dict(row))
+                        if index >= 4:
+                            break
+            finally:
+                temp_path.unlink(missing_ok=True)
+            if row_count == 0:
+                raise ValueError("CSV file is empty or has no data rows")
+
+        return {
+            "file_type": file_type,
+            "row_count": row_count,
+            "columns": columns,
+            "preview_records": preview_records,
+            "encoding": encoding,
+        }
+
     def _count_csv_rows(self, path: Path, encoding: str = "utf-8") -> int:
         """Count rows in CSV file.
 
@@ -289,19 +388,25 @@ class DatasetService:
             List of DatasetMetadata.
         """
         datasets = []
+        self._metadata_cache = {}
+        self._metadata_roots = {}
 
-        # First, load from metadata files
-        for meta_path in self._datasets_dir.glob("*.meta.json"):
-            dataset_id = meta_path.stem.replace(".meta", "")
-            metadata = self._load_metadata(dataset_id)
-            if metadata:
-                # Verify data file exists
-                data_path = self._resolve_data_path(metadata)
-                if data_path.exists():
-                    datasets.append(metadata)
-                    self._metadata_cache[dataset_id] = metadata
-                else:
-                    logger.warning("Data file missing for dataset: %s (%s)", dataset_id, data_path)
+        for root_dir in self._scan_dirs:
+            if not root_dir.exists():
+                continue
+            for meta_path in root_dir.glob("*.meta.json"):
+                dataset_id = meta_path.stem.replace(".meta", "")
+                if dataset_id in self._metadata_cache:
+                    continue
+                metadata = self._load_metadata(dataset_id, meta_dir=root_dir)
+                if metadata:
+                    data_path = self._resolve_data_path(metadata)
+                    if data_path.exists():
+                        datasets.append(metadata)
+                        self._metadata_cache[dataset_id] = metadata
+                        self._metadata_roots[dataset_id] = root_dir
+                    else:
+                        logger.warning("Data file missing for dataset: %s (%s)", dataset_id, data_path)
 
         self._cache_loaded = True
         logger.info("Scanned %d datasets", len(datasets))
@@ -333,15 +438,19 @@ class DatasetService:
             return self._metadata_cache[dataset_id]
 
         # Try loading from file
-        metadata = self._load_metadata(dataset_id)
-        if metadata:
-            self._metadata_cache[dataset_id] = metadata
-        return metadata
+        for root_dir in self._scan_dirs:
+            metadata = self._load_metadata(dataset_id, meta_dir=root_dir)
+            if metadata:
+                self._metadata_cache[dataset_id] = metadata
+                self._metadata_roots[dataset_id] = root_dir
+                return metadata
+        return None
 
     def upload_dataset(
         self,
         filename: str,
         content: bytes,
+        name: str = "",
         description: str = "",
         encoding: str = "utf-8",
     ) -> DatasetMetadata:
@@ -359,10 +468,12 @@ class DatasetService:
         Raises:
             ValueError: If file format is not supported or content is invalid.
         """
-        # Detect file type
-        file_type = self._detect_file_type(filename)
-        if not file_type:
-            raise ValueError(f"Unsupported file type: {filename}. Supported: .jsonl, .csv")
+        analysis = self._analyze_dataset_content(
+            filename=filename,
+            content=content,
+            encoding=encoding,
+        )
+        file_type: DatasetType = analysis["file_type"]
 
         # Extract base name without extension
         base_name = Path(filename).stem
@@ -370,77 +481,43 @@ class DatasetService:
 
         # Handle duplicate names
         counter = 1
-        while self._get_data_path(dataset_id, file_type).exists() or self._get_meta_path(dataset_id).exists():
+        while any(
+            self._get_data_path(dataset_id, file_type, base_dir=scan_dir).exists()
+            or self._get_meta_path(dataset_id, base_dir=scan_dir).exists()
+            for scan_dir in self._scan_dirs
+        ):
             dataset_id = f"{base_name}_{counter}"
             counter += 1
 
         # Get file paths
-        data_path = self._get_data_path(dataset_id, file_type)
-        # Save data file
+        data_path = self._get_data_path(dataset_id, file_type, base_dir=self._datasets_dir)
         data_path.write_bytes(content)
         file_size = len(content)
-
-        # Analyze content
         now = int(time.time())
-        row_count = 0
-        columns = []
-
-        try:
-            text = content.decode(encoding)
-
-            if file_type == DatasetType.JSONL:
-                # Validate JSONL
-                row_count = self._count_jsonl_rows(data_path)
-                columns = self._extract_jsonl_columns(data_path)
-
-                # Validate first few lines
-                for i, line in enumerate(text.split("\n")[:5]):
-                    if line.strip():
-                        try:
-                            json.loads(line)
-                        except json.JSONDecodeError as e:
-                            data_path.unlink(missing_ok=True)
-                            raise ValueError(f"Invalid JSONL at line {i + 1}: {e}")
-
-            elif file_type == DatasetType.CSV:
-                # Validate CSV
-                row_count = self._count_csv_rows(data_path, encoding)
-                columns = self._extract_csv_columns(data_path, encoding)
-
-                if row_count == 0:
-                    data_path.unlink(missing_ok=True)
-                    raise ValueError("CSV file is empty or has no data rows")
-
-        except UnicodeDecodeError as e:
-            data_path.unlink(missing_ok=True)
-            raise ValueError(f"Failed to decode file with encoding {encoding}: {e}")
-        except ValueError:
-            # Re-raise ValueError as-is
-            raise
-        except Exception as e:
-            data_path.unlink(missing_ok=True)
-            raise ValueError(f"Failed to process file: {e}")
 
         # Create metadata
         metadata = DatasetMetadata(
             id=dataset_id,
-            name=dataset_id,
+            name=name.strip() or dataset_id,
             description=description,
             file_path=data_path.name,
             file_type=file_type,
-            row_count=row_count,
-            columns=columns,
+            row_count=analysis["row_count"],
+            columns=analysis["columns"],
             created_at=now,
             updated_at=now,
             file_size=file_size,
             encoding=encoding,
+            source="runtime",
+            read_only=False,
         )
 
         # Save metadata
+        self._metadata_roots[dataset_id] = self._datasets_dir
         self._save_metadata(metadata)
         self._metadata_cache[dataset_id] = metadata
 
-        logger.info("Uploaded dataset: %s (%d rows)", dataset_id, row_count)
+        logger.info("Uploaded dataset: %s (%d rows)", dataset_id, metadata.row_count)
         return metadata
 
     def delete_dataset(self, name: str) -> bool:
@@ -455,6 +532,8 @@ class DatasetService:
         metadata = self.get_dataset(name)
         if not metadata:
             return False
+        if metadata.read_only:
+            raise ValueError("Built-in datasets are read-only and cannot be deleted")
 
         try:
             # Delete data file
@@ -463,12 +542,14 @@ class DatasetService:
                 data_path.unlink()
 
             # Delete metadata file
-            meta_path = self._get_meta_path(name)
+            meta_root = self._metadata_roots.get(name, self._datasets_dir)
+            meta_path = self._get_meta_path(name, base_dir=meta_root)
             if meta_path.exists():
                 meta_path.unlink()
 
             # Remove from cache
             self._metadata_cache.pop(name, None)
+            self._metadata_roots.pop(name, None)
 
             logger.info("Deleted dataset: %s", name)
             return True
@@ -513,8 +594,8 @@ class DatasetService:
                         line = line.strip()
                         if line:
                             try:
-                                records.append(json.loads(line))
-                            except json.JSONDecodeError:
+                                records.append(self._normalize_preview_jsonl_record(line, i))
+                            except Exception:
                                 records.append({"error": "Invalid JSON", "raw": line})
 
             elif metadata.file_type == DatasetType.CSV:
@@ -542,6 +623,7 @@ class DatasetService:
     def update_metadata(
         self,
         name: str,
+        display_name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> Optional[DatasetMetadata]:
         """Update dataset metadata.
@@ -556,6 +638,11 @@ class DatasetService:
         metadata = self.get_dataset(name)
         if not metadata:
             return None
+        if metadata.read_only:
+            raise ValueError("Built-in datasets are read-only and cannot be modified")
+
+        if display_name is not None and display_name.strip():
+            metadata.name = display_name.strip()
 
         if description is not None:
             metadata.description = description
@@ -566,6 +653,27 @@ class DatasetService:
         self._metadata_cache[name] = metadata
 
         return metadata
+
+    def validate_upload(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        encoding: str = "utf-8",
+    ) -> Dict[str, Any]:
+        analysis = self._analyze_dataset_content(
+            filename=filename,
+            content=content,
+            encoding=encoding,
+        )
+        return {
+            "valid": True,
+            "file_type": analysis["file_type"].value,
+            "row_count": analysis["row_count"],
+            "columns": analysis["columns"],
+            "preview_records": analysis["preview_records"],
+            "encoding": analysis["encoding"],
+        }
 
 
 # Global service instance

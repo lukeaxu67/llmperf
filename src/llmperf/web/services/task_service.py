@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from llmperf.config.loader import load_config
-from llmperf.config.models import ExecutorConfig, PricingEntry, RunConfig
+from llmperf.config.models import ExecutorConfig, MultiprocessConfig, PricingEntry, RunConfig
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
 from llmperf.runner import RunManager
@@ -275,6 +275,153 @@ class TaskService:
         except Exception as exc:
             logger.warning("Failed to load config for run %s: %s", run_id, exc)
         return None
+
+    @staticmethod
+    def _validate_executor_dependencies(executors: List[ExecutorConfig]) -> None:
+        executor_ids = [executor.id for executor in executors]
+        executor_id_set = set(executor_ids)
+
+        if len(executor_ids) != len(executor_id_set):
+            raise ValueError("Executor ids must be unique")
+
+        for executor in executors:
+            for dependency in executor.after:
+                if dependency not in executor_id_set:
+                    raise ValueError(f"Executor {executor.id} depends on unknown executor {dependency}")
+                if dependency == executor.id:
+                    raise ValueError(f"Executor {executor.id} cannot depend on itself")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        executor_map = {executor.id: executor for executor in executors}
+
+        def visit(executor_id: str) -> None:
+            if executor_id in visited:
+                return
+            if executor_id in visiting:
+                raise ValueError("Executor dependencies must form a DAG")
+            visiting.add(executor_id)
+            executor = executor_map[executor_id]
+            for dependency in executor.after:
+                visit(dependency)
+            visiting.remove(executor_id)
+            visited.add(executor_id)
+
+        for executor_id in executor_ids:
+            visit(executor_id)
+
+    def get_runtime_editable_config(self, run_id: str) -> Optional[Dict[str, Any]]:
+        task_info = self.get_task(run_id)
+        if not task_info:
+            return None
+
+        config = self._load_run_config(run_id)
+        if not config:
+            return None
+
+        return {
+            "run_id": run_id,
+            "status": task_info.status.value if isinstance(task_info.status, TaskStatus) else str(task_info.status),
+            "multiprocess": {
+                "max_workers": (
+                    config.multiprocess.max_workers
+                    if config.multiprocess
+                    else None
+                ),
+            },
+            "executors": [
+                {
+                    "id": executor.id,
+                    "name": executor.name,
+                    "provider": executor.type,
+                    "model": executor.model,
+                    "concurrency": executor.concurrency,
+                    "api_key": executor.api_key or "",
+                    "after": list(executor.after),
+                }
+                for executor in config.executors
+            ],
+        }
+
+    def update_runtime_config(
+        self,
+        run_id: str,
+        *,
+        executor_updates: List[Dict[str, Any]],
+        max_workers: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        task_info = self.get_task(run_id)
+        if not task_info:
+            return None
+
+        if task_info.status in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+            raise ValueError("Task runtime config cannot be changed while the task is running")
+
+        config = self._load_run_config(run_id)
+        if not config:
+            return None
+
+        updates_by_id = {
+            str(item.get("id") or "").strip(): item
+            for item in executor_updates
+            if str(item.get("id") or "").strip()
+        }
+        if not updates_by_id and max_workers is None:
+            raise ValueError("At least one executor update is required")
+
+        unknown_ids = [executor_id for executor_id in updates_by_id if executor_id not in {e.id for e in config.executors}]
+        if unknown_ids:
+            raise ValueError(f"Unknown executor ids: {', '.join(sorted(unknown_ids))}")
+
+        for executor in config.executors:
+            update = updates_by_id.get(executor.id)
+            if not update:
+                continue
+
+            if "concurrency" in update and update["concurrency"] is not None:
+                concurrency = int(update["concurrency"])
+                if concurrency < 1:
+                    raise ValueError(f"Executor {executor.id} concurrency must be >= 1")
+                executor.concurrency = concurrency
+
+            if "api_key" in update:
+                api_key = str(update.get("api_key") or "").strip()
+                if api_key:
+                    executor.api_key = api_key
+
+            if "after" in update and update["after"] is not None:
+                if not isinstance(update["after"], list):
+                    raise ValueError(f"Executor {executor.id} after must be a list")
+                executor.after = [str(item).strip() for item in update["after"] if str(item).strip()]
+
+        self._validate_executor_dependencies(config.executors)
+
+        if max_workers is not None:
+            max_workers = int(max_workers)
+            if max_workers < 1:
+                raise ValueError("multiprocess.max_workers must be >= 1")
+            if config.multiprocess is None:
+                config.multiprocess = MultiprocessConfig(max_workers=max_workers)
+            else:
+                config.multiprocess.max_workers = max_workers
+
+        normalized_content = self._normalize_and_snapshot_config_content(config)
+        self._config_contents[run_id] = normalized_content
+        if not self._storage.update_run_config_snapshot(
+            run_id,
+            cfg=config,
+            config_content=normalized_content,
+            config_path="",
+        ):
+            return None
+
+        self._clear_task_caches(run_id)
+        progress = self._progress.get(run_id)
+        if progress:
+            progress.last_updated_at = None
+            self._update_progress_snapshot(run_id, task_status=task_info.status, progress=progress)
+
+        return self.get_runtime_editable_config(run_id)
 
     def _estimate_dataset_total(self, config: Optional[RunConfig]) -> int:
         if not config or not config.dataset:

@@ -219,6 +219,205 @@ def test_recover_endpoint_reuses_same_run_id(tmp_path, monkeypatch):
         assert calls == [run_id]
 
 
+def test_runtime_config_endpoint_updates_editable_fields(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime-config.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": CHAIN_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        get_response = client.get(f"/api/tasks/{run_id}/runtime-config")
+        assert get_response.status_code == 200
+        assert get_response.json()["executors"][0]["concurrency"] == 1
+
+        update_response = client.patch(
+            f"/api/tasks/{run_id}/runtime-config",
+            json={
+                "max_workers": 3,
+                "executors": [
+                    {"id": "exec-a", "concurrency": 4, "api_key": "sk-a"},
+                    {"id": "exec-b", "after": []},
+                ],
+            },
+        )
+        assert update_response.status_code == 200
+        body = update_response.json()
+        exec_a = next(item for item in body["executors"] if item["id"] == "exec-a")
+        exec_b = next(item for item in body["executors"] if item["id"] == "exec-b")
+        assert exec_a["concurrency"] == 4
+        assert exec_a["api_key"] == "sk-a"
+        assert exec_b["after"] == []
+        assert body["multiprocess"]["max_workers"] == 3
+
+        config_response = client.get(f"/api/tasks/{run_id}/config")
+        assert config_response.status_code == 200
+        config_content = config_response.json()["config_content"]
+        assert "concurrency: 4" in config_content
+        assert "api_key: sk-a" in config_content
+        assert "max_workers: 3" in config_content
+
+
+def test_runtime_config_blank_api_key_keeps_existing_value(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime-config-api-key.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config_with_key = """
+info: "Config Update API Key"
+dataset:
+  source:
+    type: "jsonl"
+    name: "test"
+    config:
+      path: "resource/test.jsonl"
+  iterator:
+    mutation_chain: ["identity"]
+    max_rounds: 1
+executors:
+  - id: "exec-a"
+    name: "Executor A"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-a"
+    api_key: "kept-secret"
+"""
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": config_with_key,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        update_response = client.patch(
+            f"/api/tasks/{run_id}/runtime-config",
+            json={
+                "executors": [
+                    {"id": "exec-a", "concurrency": 2, "api_key": ""},
+                ],
+            },
+        )
+        assert update_response.status_code == 200
+        body = update_response.json()
+        assert body["executors"][0]["api_key"] == "kept-secret"
+
+        config_response = client.get(f"/api/tasks/{run_id}/config")
+        assert config_response.status_code == 200
+        assert "api_key: kept-secret" in config_response.json()["config_content"]
+
+
+def test_runtime_config_endpoint_rejects_cycles(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime-config-cycle.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": CHAIN_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        response = client.patch(
+            f"/api/tasks/{run_id}/runtime-config",
+            json={
+                "executors": [
+                    {"id": "exec-a", "after": ["exec-b"]},
+                    {"id": "exec-b", "after": ["exec-a"]},
+                ],
+            },
+        )
+        assert response.status_code == 400
+        assert "DAG" in response.json()["detail"]
+
+
+def test_runtime_config_endpoint_rejects_running_task(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime-config-running.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": CHAIN_WEB_CONFIG,
+                "auto_start": False,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        service = web_main.get_task_service()
+        task_info = service.get_task(run_id)
+        assert task_info is not None
+        task_info.status = TaskStatus.RUNNING
+
+        response = client.patch(
+            f"/api/tasks/{run_id}/runtime-config",
+            json={
+                "executors": [{"id": "exec-a", "concurrency": 2}],
+            },
+        )
+        assert response.status_code == 400
+        assert "cannot be changed while the task is running" in response.json()["detail"]
+
+
+def test_recover_uses_updated_runtime_config(tmp_path, monkeypatch):
+    db_path = tmp_path / "recover-updated-config.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={"config_content": CHAIN_WEB_CONFIG, "auto_start": False},
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        update_response = client.patch(
+            f"/api/tasks/{run_id}/runtime-config",
+            json={"executors": [{"id": "exec-a", "concurrency": 5}]},
+        )
+        assert update_response.status_code == 200
+
+        cancel_response = client.post(f"/api/tasks/{run_id}/cancel")
+        assert cancel_response.status_code == 200
+
+        service = web_main.get_task_service()
+        calls: list[str] = []
+
+        def fake_run_task(target_run_id: str) -> None:
+            calls.append(target_run_id)
+            config = service._load_run_config(target_run_id)
+            assert config is not None
+            assert next(item for item in config.executors if item.id == "exec-a").concurrency == 5
+
+        monkeypatch.setattr(service, "run_task", fake_run_task)
+
+        recover_response = client.post(f"/api/tasks/{run_id}/recover")
+        assert recover_response.status_code == 200
+        assert calls == [run_id]
+
+
 def test_batch_progress_endpoint_returns_multiple_task_snapshots(tmp_path, monkeypatch):
     db_path = tmp_path / "progress-batch.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
