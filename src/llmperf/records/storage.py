@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
+from sqlalchemy.exc import OperationalError
+
 from .db import Database, ExecutionORM, PricingHistoryORM, RunORM, dumps, loads
 
 from llmperf.config.models import RunConfig
 from llmperf.records.model import RunRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -198,10 +205,46 @@ class Storage:
             extra_json=dumps(record.extra),
             created_at=int(time.time()),
         )
+        # Retry logic for SQLITE_BUSY errors
+        max_retries = 5
+        try:
+            max_retries = int(os.getenv("DB_WRITE_RETRY", "5"))
+        except (ValueError, TypeError):
+            max_retries = 5
+        retry_sleep = 0.2
+        try:
+            retry_sleep = float(os.getenv("DB_WRITE_RETRY_SLEEP", "0.2"))
+        except (ValueError, TypeError):
+            retry_sleep = 0.2
+
         with self._lock:
-            with self.db.session() as session:
-                session.add(payload)
-                session.commit()
+            attempt = 0
+            while True:
+                try:
+                    with self.db.session() as session:
+                        session.add(payload)
+                        session.commit()
+                    break
+                except OperationalError as e:
+                    msg = str(e).lower()
+                    if "database is locked" in msg or "database table is locked" in msg:
+                        attempt += 1
+                        if attempt > max_retries:
+                            logger.error(
+                                "DB insert failed after %d retries: %s",
+                                max_retries,
+                                e,
+                            )
+                            raise
+                        logger.debug(
+                            "Database locked, retrying (%d/%d): %s",
+                            attempt,
+                            max_retries,
+                            e,
+                        )
+                        time.sleep(max(0.0, retry_sleep) * attempt)
+                        continue
+                    raise
 
     def fetch_run_records(self, run_id: str) -> Iterable[RunRecord]:
         with self.db.session() as session:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
+import signal
 import threading
 import time
 import uuid
@@ -23,6 +25,63 @@ import yaml
 from .run_config_service import load_run_config_content, normalize_run_config
 
 logger = logging.getLogger(__name__)
+
+
+def _cleanup_orphan_executor_processes() -> int:
+    """Kill orphan executor processes from previous service instances.
+
+    Returns the number of processes killed.
+    """
+    killed_count = 0
+    current_pid = os.getpid()
+
+    try:
+        # Find processes with "executor-" in name that are not our children
+        import psutil
+        for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
+            try:
+                proc_info = proc.info
+                proc_pid = proc_info.get('pid')
+                proc_ppid = proc_info.get('ppid')
+                cmdline = proc_info.get('cmdline') or []
+
+                # Skip our own process
+                if proc_pid == current_pid:
+                    continue
+
+                # Check if this is an executor process
+                cmdline_str = ' '.join(cmdline) if cmdline else ''
+                is_executor = any('executor-' in arg for arg in cmdline) or 'executor-' in str(proc_info.get('name', ''))
+
+                if not is_executor:
+                    continue
+
+                # Check if parent is still alive
+                try:
+                    parent = psutil.Process(proc_ppid) if proc_ppid else None
+                    if parent and parent.is_running():
+                        # Parent is alive, not an orphan
+                        continue
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    # Parent doesn't exist or we can't access - potential orphan
+                    pass
+
+                # This is an orphan executor process - kill it
+                logger.warning("Killing orphan executor process: PID=%d cmdline=%s", proc_pid, cmdline_str[:100])
+                proc.terminate()
+                killed_count += 1
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except ImportError:
+        logger.debug("psutil not available, skipping orphan process cleanup")
+    except Exception as e:
+        logger.warning("Error during orphan process cleanup: %s", e)
+
+    if killed_count > 0:
+        logger.info("Cleaned up %d orphan executor processes", killed_count)
+
+    return killed_count
 
 
 def _avg(values: List[float]) -> float:
@@ -104,6 +163,9 @@ class TaskService:
 
     def __init__(self):
         """Initialize task service."""
+        # Clean up any orphan executor processes from previous service instances
+        _cleanup_orphan_executor_processes()
+
         self._tasks: Dict[str, TaskInfo] = {}
         self._progress: Dict[str, TaskProgress] = {}
         self._cancel_events: Dict[str, threading.Event] = {}
@@ -122,6 +184,11 @@ class TaskService:
         self._restore_recoverable_tasks()
 
     def _restore_recoverable_tasks(self) -> None:
+        """Restore recoverable tasks after service restart.
+
+        - SCHEDULED tasks: restore and run if past scheduled time
+        - RUNNING tasks: mark as FAILED (service restart interrupted them)
+        """
         try:
             recoverable_runs = self._storage.list_runs(limit=1000)
         except Exception as exc:
@@ -137,6 +204,26 @@ class TaskService:
             if task_info.status not in (TaskStatus.SCHEDULED, TaskStatus.RUNNING):
                 continue
 
+            config_content = run.get("config_content") or ""
+            if config_content:
+                self._config_contents[task_info.run_id] = config_content
+
+            if task_info.status == TaskStatus.RUNNING:
+                # Service restart interrupted running tasks - mark as failed
+                # to prevent duplicate execution from orphan processes
+                logger.warning(
+                    "Task %s was RUNNING at service restart - marking as FAILED to prevent duplicate execution",
+                    task_info.run_id,
+                )
+                self._storage.update_run_status(
+                    task_info.run_id,
+                    status=TaskStatus.FAILED.value,
+                    completed_at=int(now.timestamp()),
+                    error_message="Task interrupted by service restart",
+                )
+                continue
+
+            # Only restore SCHEDULED tasks
             self._tasks[task_info.run_id] = task_info
             self._progress.setdefault(
                 task_info.run_id,
@@ -146,19 +233,12 @@ class TaskService:
                     started_at=task_info.started_at,
                 ),
             )
-            config_content = run.get("config_content") or ""
-            if config_content:
-                self._config_contents[task_info.run_id] = config_content
 
             if task_info.status == TaskStatus.SCHEDULED:
                 if task_info.scheduled_at and task_info.scheduled_at > now:
                     self.schedule_task(task_info.run_id, task_info.scheduled_at)
                 else:
                     threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
-                continue
-
-            logger.info("Restoring interrupted running task %s after service restart", task_info.run_id)
-            threading.Thread(target=self.run_task, args=(task_info.run_id,), daemon=True).start()
 
     def _load_run_snapshot(self, run_id: str) -> Optional[Dict[str, Any]]:
         return self._storage.get_run(run_id)

@@ -646,7 +646,8 @@ def test_executor_resume_skips_completed_dataset_rows(tmp_path):
     assert executor.processed_ids == ["row-2"]
 
 
-def test_task_service_restores_running_tasks_after_restart(tmp_path, monkeypatch):
+def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):
+    """After service restart, running tasks should be marked as failed to prevent duplicate execution."""
     db_path = tmp_path / "restore-running.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
     _reset_services()
@@ -671,13 +672,17 @@ def test_task_service_restores_running_tasks_after_restart(tmp_path, monkeypatch
     monkeypatch.setattr(TaskService, "run_task", fake_run_task)
 
     service = TaskService()
-    assert "run-restored" in service._tasks
+    # Running tasks should NOT be restored to _tasks (they are marked as failed)
+    assert "run-restored" not in service._tasks
 
-    deadline = time.time() + 2
-    while time.time() < deadline and calls != ["run-restored"]:
-        time.sleep(0.05)
+    # run_task should NOT be called for running tasks after restart
+    assert calls == []
 
-    assert calls == ["run-restored"]
+    # Verify the task was marked as failed in storage
+    run_snapshot = storage.get_run("run-restored")
+    assert run_snapshot is not None
+    assert run_snapshot["status"] == "failed"
+    assert "interrupted" in run_snapshot.get("error_message", "").lower()
 
 
 def test_storage_infers_legacy_run_statuses_from_timestamps(tmp_path):

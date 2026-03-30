@@ -105,6 +105,7 @@ class Database:
         if self.db_path.parent and not self.db_path.parent.exists():
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_engine(f"sqlite:///{self.db_path}", future=True)
+        self._init_pragmas()
         self._legacy_responses_column = self._detect_legacy_responses_column()
         Base.metadata.create_all(self.engine)
         self._ensure_cache_cost_column()
@@ -116,6 +117,22 @@ class Database:
         self._ensure_execution_price_snapshot_columns()
         self._ensure_execution_indexes()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
+
+    def _init_pragmas(self) -> None:
+        """Initialize SQLite PRAGMAs for better concurrency.
+
+        - WAL mode: allows concurrent readers with writers
+        - synchronous=NORMAL: faster writes with acceptable durability
+        - busy_timeout: wait up to 30s when database is locked
+        """
+        try:
+            with self.engine.connect() as conn:
+                conn.execute(text("PRAGMA journal_mode=WAL"))
+                conn.execute(text("PRAGMA synchronous=NORMAL"))
+                conn.execute(text("PRAGMA busy_timeout=30000"))
+                conn.commit()
+        except Exception:
+            pass  # Silently ignore PRAGMA errors
 
     def session(self) -> Session:
         return self.Session()
