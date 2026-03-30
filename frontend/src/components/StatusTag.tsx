@@ -12,23 +12,90 @@ type TaskStatus = 'scheduled' | 'pending' | 'running' | 'paused' | 'completed' |
 
 interface StatusTagProps {
   status: TaskStatus
+  style?: React.CSSProperties
 }
 
-const statusConfig: Record<TaskStatus, { color: string; icon: React.ReactNode; text: string }> = {
-  scheduled: { color: 'blue', icon: <ClockCircleOutlined />, text: '已定时' },
-  pending: { color: 'warning', icon: <ClockCircleOutlined />, text: '等待中' },
-  running: { color: 'processing', icon: <LoadingOutlined spin />, text: '运行中' },
-  paused: { color: 'warning', icon: <PauseCircleOutlined />, text: '已暂停' },
-  completed: { color: 'success', icon: <CheckCircleOutlined />, text: '已完成' },
-  failed: { color: 'error', icon: <CloseCircleOutlined />, text: '失败' },
-  cancelled: { color: 'default', icon: <StopOutlined />, text: '已取消' },
+interface StatusConfig {
+  color: string
+  background: string
+  border: string
+  icon: React.ReactNode
+  text: string
 }
 
-export default function StatusTag({ status }: StatusTagProps) {
+const statusConfig: Record<TaskStatus, StatusConfig> = {
+  scheduled: {
+    color: '#1677ff',
+    background: '#e6f4ff',
+    border: '#91caff',
+    icon: <ClockCircleOutlined />,
+    text: '已定时',
+  },
+  pending: {
+    color: '#faad14',
+    background: '#fffbe6',
+    border: '#ffe58f',
+    icon: <ClockCircleOutlined />,
+    text: '等待中',
+  },
+  running: {
+    color: '#1677ff',
+    background: '#e6f4ff',
+    border: '#91caff',
+    icon: <LoadingOutlined spin />,
+    text: '运行中',
+  },
+  paused: {
+    color: '#fa8c16',
+    background: '#fff7e6',
+    border: '#ffd591',
+    icon: <PauseCircleOutlined />,
+    text: '已暂停',
+  },
+  completed: {
+    color: '#52c41a',
+    background: '#f6ffed',
+    border: '#b7eb8f',
+    icon: <CheckCircleOutlined />,
+    text: '已完成',
+  },
+  failed: {
+    color: '#ff4d4f',
+    background: '#fff2f0',
+    border: '#ffa39e',
+    icon: <CloseCircleOutlined />,
+    text: '失败',
+  },
+  cancelled: {
+    color: '#666666',
+    background: '#f5f5f5',
+    border: '#d9d9d9',
+    icon: <StopOutlined />,
+    text: '已取消',
+  },
+}
+
+export default function StatusTag({ status, style }: StatusTagProps) {
   const config = statusConfig[status] || statusConfig.pending
 
   return (
-    <Tag color={config.color} icon={config.icon}>
+    <Tag
+      icon={config.icon}
+      style={{
+        color: config.color,
+        background: config.background,
+        borderColor: config.border,
+        borderRadius: 6,
+        padding: '2px 10px',
+        fontSize: 13,
+        fontWeight: 500,
+        border: `1px solid ${config.border}`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        ...style,
+      }}
+    >
       {config.text}
     </Tag>
   )

@@ -743,7 +743,7 @@ export default function TaskDetail() {
             scroll={{ x: 960 }}
             dataSource={taskErrors}
             columns={[
-              { title: '执行器', dataIndex: 'executor_id', key: 'executor_id', width: 140 },
+              { title: '执行器', dataIndex: 'executor_id', key: 'executor_id', fixed: 'left' as const, width: 140 },
               { title: 'Provider', dataIndex: 'provider', key: 'provider', width: 120 },
               { title: '模型', dataIndex: 'model', key: 'model', width: 180 },
               { title: '状态码', dataIndex: ['error', 'status_code'], key: 'status_code', width: 90 },

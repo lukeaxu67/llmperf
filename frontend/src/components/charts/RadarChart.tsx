@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import ReactECharts from 'echarts-for-react'
 import { Card, Empty, Spin } from 'antd'
+import { useThemeStore } from '@/stores/themeStore'
 
 interface RadarData {
   name: string
@@ -23,8 +24,11 @@ export default function RadarChart({
   indicators = defaultIndicators,
   loading = false,
   title = '模型综合评分对比',
-  height = 400
+  height = 400,
 }: RadarChartProps) {
+  const mode = useThemeStore((state) => state.mode)
+  const isDark = mode === 'dark'
+
   const option = useMemo(() => {
     if (data.length === 0) {
       return {}
@@ -39,34 +43,45 @@ export default function RadarChart({
 
     const radarIndicators = indicators.map((name, i) => ({
       name,
-      max: maxValues[i] || 100
+      max: maxValues[i] || 100,
     }))
 
     const colors = ['#1677ff', '#52c41a', '#fa8c16', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96']
 
     return {
       legend: {
-        data: data.map(d => d.name),
-        top: 5
+        data: data.map((d) => d.name),
+        top: 5,
+        textStyle: {
+          color: isDark ? '#ffffffd9' : '#1f1f1f',
+        },
       },
       radar: {
         indicator: radarIndicators,
         radius: '65%',
         splitNumber: 4,
         axisName: {
-          fontSize: 12
+          fontSize: 12,
+          color: isDark ? '#a6a6a6' : '#666666',
         },
         splitLine: {
           lineStyle: {
-            color: 'rgba(255, 255, 255, 0.1)'
-          }
+            color: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          },
         },
         splitArea: {
           show: true,
           areaStyle: {
-            color: ['rgba(22, 119, 255, 0.05)', 'rgba(22, 119, 255, 0.1)']
-          }
-        }
+            color: isDark
+              ? ['rgba(22, 119, 255, 0.08)', 'rgba(22, 119, 255, 0.15)']
+              : ['rgba(22, 119, 255, 0.05)', 'rgba(22, 119, 255, 0.1)'],
+          },
+        },
+        axisLine: {
+          lineStyle: {
+            color: isDark ? '#424242' : '#d9d9d9',
+          },
+        },
       },
       series: [
         {
@@ -75,21 +90,31 @@ export default function RadarChart({
             value: item.value,
             name: item.name,
             itemStyle: {
-              color: colors[index % colors.length]
+              color: colors[index % colors.length],
             },
             areaStyle: {
-              opacity: 0.2
-            }
-          }))
-        }
-      ]
+              opacity: 0.2,
+            },
+            lineStyle: {
+              width: 2,
+            },
+          })),
+        },
+      ],
     }
-  }, [data, indicators])
+  }, [data, indicators, isDark])
 
   if (loading) {
     return (
-      <Card>
-        <div style={{ height, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <Card
+        style={{
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+      >
+        <div
+          style={{ height, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+        >
           <Spin size="large" />
         </div>
       </Card>
@@ -98,14 +123,26 @@ export default function RadarChart({
 
   if (!data || data.length === 0) {
     return (
-      <Card title={title}>
+      <Card
+        title={title}
+        style={{
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+      >
         <Empty description="暂无数据" />
       </Card>
     )
   }
 
   return (
-    <Card title={title}>
+    <Card
+      title={title}
+      style={{
+        borderRadius: 12,
+        border: '1px solid var(--color-border-secondary)',
+      }}
+    >
       <ReactECharts option={option} style={{ height }} opts={{ renderer: 'svg' }} />
     </Card>
   )

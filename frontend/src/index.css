@@ -1,3 +1,68 @@
+/* CSS Variables System */
+:root {
+  --color-primary: #1677ff;
+  --color-primary-hover: #4096ff;
+  --color-success: #52c41a;
+  --color-warning: #faad14;
+  --color-error: #ff4d4f;
+
+  --color-bg-container: #ffffff;
+  --color-bg-elevated: #ffffff;
+  --color-bg-layout: #f0f2f5;
+  --color-bg-spotlight: #fafafa;
+
+  --color-text: #1f1f1f;
+  --color-text-secondary: #666666;
+  --color-text-tertiary: #999999;
+
+  --color-border: #d9d9d9;
+  --color-border-secondary: #f0f0f0;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-elevated: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12);
+
+  --gradient-primary: linear-gradient(135deg, #1677ff 0%, #0958d9 100%);
+  --gradient-success: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+  --gradient-warning: linear-gradient(135deg, #faad14 0%, #d48806 100%);
+  --gradient-error: linear-gradient(135deg, #ff4d4f 0%, #cf1322 100%);
+
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+  --transition-slow: 0.35s ease;
+}
+
+/* Dark Theme Variables */
+[data-theme='dark'] {
+  --color-primary: #177ddc;
+  --color-primary-hover: #3c9ae8;
+  --color-success: #49aa19;
+  --color-warning: #d89614;
+  --color-error: #a61d24;
+
+  --color-bg-container: #141414;
+  --color-bg-elevated: #1f1f1f;
+  --color-bg-layout: #0a0a0a;
+  --color-bg-spotlight: #262626;
+
+  --color-text: #ffffffd9;
+  --color-text-secondary: #a6a6a6;
+  --color-text-tertiary: #737373;
+
+  --color-border: #424242;
+  --color-border-secondary: #303030;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 6px -1px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 6px 16px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 6px 16px 0 rgba(0, 0, 0, 0.32), 0 3px 6px -4px rgba(0, 0, 0, 0.4);
+
+  --gradient-primary: linear-gradient(135deg, #177ddc 0%, #0e5db7 100%);
+  --gradient-success: linear-gradient(135deg, #49aa19 0%, #3c8618 100%);
+  --gradient-warning: linear-gradient(135deg, #d89614 0%, #b37414 100%);
+  --gradient-error: linear-gradient(135deg, #a61d24 0%, #841d1d 100%);
+}
+
+/* Reset & Base */
 * {
   margin: 0;
   padding: 0;
@@ -14,62 +79,119 @@ body {
     'Noto Color Emoji';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
+  background-color: var(--color-bg-layout);
+  color: var(--color-text);
+  transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
-/* Scrollbar styling */
+/* Scrollbar Styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--color-text-tertiary);
   border-radius: 4px;
+  transition: background var(--transition-fast);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: var(--color-text-secondary);
 }
 
-/* Code/Monaco editor container */
-.monaco-editor-container {
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
+/* Card Styles */
+.modern-card {
+  background: var(--color-bg-container);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-secondary);
+  transition: box-shadow var(--transition-normal), transform var(--transition-normal);
+}
+
+.modern-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+/* Stat Card Enhancements */
+.stat-card {
+  background: var(--color-bg-container);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-secondary);
+  transition: all var(--transition-normal);
+  position: relative;
   overflow: hidden;
 }
 
-/* Chart container */
-.chart-container {
-  background: #fff;
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-}
-
-/* Stats card animation */
-.stat-card {
-  transition: transform 0.2s, box-shadow 0.2s;
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--gradient-primary);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
 }
 
 .stat-card:hover {
+  box-shadow: var(--shadow-card-hover);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
-/* Progress bar in table */
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+.stat-card.success::before {
+  background: var(--gradient-success);
+}
+
+.stat-card.warning::before {
+  background: var(--gradient-warning);
+}
+
+.stat-card.error::before {
+  background: var(--gradient-error);
+}
+
+/* Chart Container */
+.chart-container {
+  background: var(--color-bg-container);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-border-secondary);
+  transition: box-shadow var(--transition-normal);
+}
+
+.chart-container:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* Code/Monaco Editor Container */
+.monaco-editor-container {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Progress Bar Cell */
 .progress-cell {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-/* Status badge */
+/* Status Badge Animation */
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -84,20 +206,20 @@ body {
 }
 
 .status-badge.success::before {
-  background-color: #52c41a;
+  background-color: var(--color-success);
 }
 
 .status-badge.error::before {
-  background-color: #ff4d4f;
+  background-color: var(--color-error);
 }
 
 .status-badge.running::before {
-  background-color: #1677ff;
+  background-color: var(--color-primary);
   animation: pulse 1.5s infinite;
 }
 
 .status-badge.pending::before {
-  background-color: #faad14;
+  background-color: var(--color-warning);
 }
 
 @keyframes pulse {
@@ -107,4 +229,108 @@ body {
   50% {
     opacity: 0.5;
   }
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Staggered Animation for Cards */
+.stagger-animation > * {
+  animation: fadeIn 0.3s ease-out;
+  animation-fill-mode: both;
+}
+
+.stagger-animation > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-animation > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-animation > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-animation > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-animation > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-animation > *:nth-child(6) { animation-delay: 0.3s; }
+
+/* Glass Effect */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+[data-theme='dark'] .glass-effect {
+  background: rgba(20, 20, 20, 0.8);
+}
+
+/* Gradient Text */
+.gradient-text {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Table Enhancements */
+.modern-table .ant-table {
+  background: transparent;
+}
+
+.modern-table .ant-table-thead > tr > th {
+  background: var(--color-bg-spotlight);
+  font-weight: 600;
+}
+
+.modern-table .ant-table-tbody > tr:hover > td {
+  background: var(--color-bg-spotlight);
+}
+
+/* Page Header */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+/* Action Buttons Group */
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* Empty State */
+.empty-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+/* Tooltip Styling - Force dark background in light mode */
+:root .ant-tooltip {
+  --ant-color-bg-elevated: #1f1f1f;
+}
+
+:root .ant-tooltip-inner {
+  background-color: #1f1f1f !important;
+  color: #ffffff !important;
+}
+
+:root .ant-tooltip-arrow-content {
+  background-color: #1f1f1f !important;
 }

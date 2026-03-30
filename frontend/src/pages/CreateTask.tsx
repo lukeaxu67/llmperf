@@ -159,12 +159,12 @@ export default function CreateTask() {
 
     try {
       const isScheduled = startMode === 'scheduled' && scheduledAt
-      const response = await taskApi.create({
+      const response = (await taskApi.create({
         config_content: yamlContent,
         auto_start: !isScheduled,
         task_type: taskType,
         scheduled_at: isScheduled ? scheduledAt.toISOString() : undefined,
-      }) as any
+      })) as any
 
       setCreatedTaskId(response.run_id)
       setCreatedMessage(isScheduled ? '任务已创建并加入定时执行' : '任务已创建并开始执行')
@@ -192,29 +192,54 @@ export default function CreateTask() {
 
   if (createdTaskId) {
     return (
-      <div>
+      <div className="fade-in">
         <div style={{ marginBottom: 16 }}>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
+          <Button
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/tasks')}
+            style={{ borderRadius: 8 }}
+          >
             返回列表
           </Button>
         </div>
 
-        <Result
-          status="success"
-          title={createdMessage}
-          subTitle={`任务 ID: ${createdTaskId}`}
-          extra={[
-            <Button type="primary" key="view" onClick={handleViewTask}>
-              查看任务
-            </Button>,
-            <Button key="another" onClick={handleCreateAnother}>
-              再建一个
-            </Button>,
-            <Button key="list" onClick={() => navigate('/tasks')}>
-              返回列表
-            </Button>,
-          ]}
-        />
+        <Card
+          style={{
+            borderRadius: 16,
+            textAlign: 'center',
+            padding: 40,
+          }}
+        >
+          <Result
+            status="success"
+            title={<Title level={3} style={{ marginBottom: 8 }}>{createdMessage}</Title>}
+            subTitle={<Text type="secondary">任务 ID: {createdTaskId}</Text>}
+            extra={[
+              <Button
+                type="primary"
+                key="view"
+                onClick={handleViewTask}
+                style={{ borderRadius: 8, height: 40 }}
+              >
+                查看任务
+              </Button>,
+              <Button
+                key="another"
+                onClick={handleCreateAnother}
+                style={{ borderRadius: 8, height: 40 }}
+              >
+                再建一个
+              </Button>,
+              <Button
+                key="list"
+                onClick={() => navigate('/tasks')}
+                style={{ borderRadius: 8, height: 40 }}
+              >
+                返回列表
+              </Button>,
+            ]}
+          />
+        </Card>
       </div>
     )
   }
@@ -231,39 +256,75 @@ export default function CreateTask() {
         return (
           <div>
             <YamlPreview onValidChange={setYamlValid} />
-            <Card style={{ marginTop: 16 }}>
+            <Card
+              style={{
+                marginTop: 16,
+                borderRadius: 12,
+                border: '1px solid var(--color-border-secondary)',
+              }}
+            >
               <Space direction="vertical" style={{ width: '100%' }} size="middle">
                 <Space>
-                  <Button icon={<BugOutlined />} onClick={() => setTestRunOpen(true)}>
+                  <Button
+                    icon={<BugOutlined />}
+                    onClick={() => setTestRunOpen(true)}
+                    style={{ borderRadius: 8 }}
+                  >
                     测试运行
                   </Button>
                   <Alert
                     message="测试运行会使用第 1 条数据，对所有执行器各执行 1 次，结果不会落库。"
                     type="info"
                     showIcon
-                    style={{ display: 'inline-flex' }}
+                    style={{ display: 'inline-flex', borderRadius: 8 }}
                   />
                 </Space>
 
-                <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                  <Text strong>启动方式</Text>
-                  <Radio.Group value={startMode} onChange={(e) => setStartMode(e.target.value)}>
-                    <Space direction="vertical">
-                      <Radio value="now">立即执行</Radio>
-                      <Radio value="scheduled">定时执行</Radio>
-                    </Space>
+                <div
+                  style={{
+                    padding: 16,
+                    background: 'var(--color-bg-spotlight)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text strong style={{ display: 'block', marginBottom: 12 }}>
+                    启动方式
+                  </Text>
+                  <Radio.Group
+                    value={startMode}
+                    onChange={(e) => setStartMode(e.target.value)}
+                    optionType="button"
+                    buttonStyle="solid"
+                    style={{ marginBottom: startMode === 'scheduled' ? 12 : 0 }}
+                  >
+                    <Radio.Button value="now" style={{ borderRadius: '8px 0 0 8px' }}>
+                      <Space size={4}>
+                        <PlayCircleOutlined />
+                        立即执行
+                      </Space>
+                    </Radio.Button>
+                    <Radio.Button value="scheduled" style={{ borderRadius: '0 8px 8px 0' }}>
+                      <Space size={4}>
+                        <ClockCircleOutlined />
+                        定时执行
+                      </Space>
+                    </Radio.Button>
                   </Radio.Group>
                   {startMode === 'scheduled' && (
-                    <DatePicker
-                      showTime
-                      style={{ width: 320 }}
-                      placeholder="选择执行时间"
-                      value={scheduledAt}
-                      onChange={setScheduledAt}
-                      disabledDate={(current) => !!current && current.endOf('day').isBefore(dayjs().startOf('day'))}
-                    />
+                    <div style={{ marginTop: 12 }}>
+                      <DatePicker
+                        showTime
+                        style={{ width: 320, borderRadius: 8 }}
+                        placeholder="选择执行时间"
+                        value={scheduledAt}
+                        onChange={setScheduledAt}
+                        disabledDate={(current) =>
+                          !!current && current.endOf('day').isBefore(dayjs().startOf('day'))
+                        }
+                      />
+                    </div>
                   )}
-                </Space>
+                </div>
               </Space>
             </Card>
           </div>
@@ -274,25 +335,39 @@ export default function CreateTask() {
   }
 
   return (
-    <div>
+    <div className="fade-in">
+      {/* Page Header */}
       <div style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')}>
+        <Button
+          icon={<ArrowLeftOutlined />}
+          onClick={() => navigate('/tasks')}
+          style={{ borderRadius: 8 }}
+        >
           返回列表
         </Button>
       </div>
 
-      <Title level={4}>创建任务</Title>
-      <Paragraph type="secondary">
+      <Title level={3} style={{ marginBottom: 4 }}>
+        创建任务
+      </Title>
+      <Paragraph type="secondary" style={{ marginBottom: 24 }}>
         按步骤配置数据集、执行参数和执行器，最后选择立即执行或定时执行。
       </Paragraph>
 
-      <Card style={{ marginBottom: 24 }}>
+      {/* Task Type Card */}
+      <Card
+        style={{
+          marginBottom: 24,
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+      >
         <Row gutter={[16, 16]} align="middle">
           <Col>
             <Space direction="vertical" size={0}>
               <Text strong>任务类型</Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                选择任务类型以决定任务用途。
+                选择任务类型以决定任务用途
               </Text>
             </Space>
           </Col>
@@ -303,13 +378,13 @@ export default function CreateTask() {
               optionType="button"
               buttonStyle="solid"
             >
-              <Radio.Button value="benchmark">
+              <Radio.Button value="benchmark" style={{ borderRadius: '8px 0 0 8px' }}>
                 <Space>
                   <ExperimentOutlined />
                   基准测试
                 </Space>
               </Radio.Button>
-              <Radio.Button value="monitoring">
+              <Radio.Button value="monitoring" style={{ borderRadius: '0 8px 8px 0' }}>
                 <Space>
                   <MonitorOutlined />
                   持续监控
@@ -321,31 +396,60 @@ export default function CreateTask() {
             <Alert
               message={
                 taskType === 'benchmark'
-                  ? '基准测试会立即或按计划执行一轮完整评测。'
-                  : '持续监控用于周期性地观察模型表现变化。'
+                  ? '基准测试会立即或按计划执行一轮完整评测'
+                  : '持续监控用于周期性地观察模型表现变化'
               }
               type="info"
               showIcon
+              style={{ borderRadius: 8 }}
             />
           </Col>
         </Row>
       </Card>
 
-      <Card style={{ marginBottom: 24 }}>
-        <Steps current={currentStep} items={steps} onChange={setStep} />
+      {/* Steps Card */}
+      <Card
+        style={{
+          marginBottom: 24,
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+      >
+        <Steps
+          current={currentStep}
+          items={steps}
+          onChange={setStep}
+          style={{ padding: '0 24px' }}
+        />
       </Card>
 
+      {/* Step Content */}
       <div style={{ marginBottom: 24 }}>{renderStepContent()}</div>
 
-      <Card>
+      {/* Navigation Card */}
+      <Card
+        style={{
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+        styles={{ body: { padding: '16px 24px' } }}
+      >
         <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Button disabled={currentStep === 0} onClick={prevStep}>
+          <Button
+            disabled={currentStep === 0}
+            onClick={prevStep}
+            style={{ borderRadius: 8, minWidth: 80 }}
+          >
             上一步
           </Button>
 
           <Space>
             {currentStep < steps.length - 1 ? (
-              <Button type="primary" onClick={handleNext}>
+              <Button
+                type="primary"
+                onClick={handleNext}
+                style={{ borderRadius: 8, minWidth: 80 }}
+              >
                 下一步
               </Button>
             ) : (
@@ -354,6 +458,7 @@ export default function CreateTask() {
                 icon={startMode === 'scheduled' ? <ClockCircleOutlined /> : <PlayCircleOutlined />}
                 loading={submitting}
                 onClick={handleSubmit}
+                style={{ borderRadius: 8, minWidth: 120 }}
               >
                 {startMode === 'scheduled' ? '创建并定时' : '创建并执行'}
               </Button>

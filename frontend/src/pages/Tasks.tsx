@@ -12,7 +12,7 @@ import {
   Popconfirm,
   message,
   Empty,
-  Statistic,
+  Input,
   Row,
   Col,
 } from 'antd'
@@ -25,16 +25,17 @@ import {
   RedoOutlined,
   PlayCircleOutlined,
   SyncOutlined,
+  CopyOutlined,
+  SearchOutlined,
   FileTextOutlined,
   DollarOutlined,
-  CopyOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import StatusTag from '@/components/StatusTag'
 import TaskProgressBar from '@/components/TaskProgressBar'
 import { taskApi, pricingApi, Task, TaskProgress } from '@/services/api'
 
-const { Title } = Typography
+const { Title, Text } = Typography
 
 interface TaskWithCost extends Task {
   total_cost?: number
@@ -49,6 +50,7 @@ export default function Tasks() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [statusFilter, setStatusFilter] = useState<string | undefined>()
+  const [searchText, setSearchText] = useState('')
   const [progressMap, setProgressMap] = useState<Record<string, TaskProgress>>({})
   const [totalCost, setTotalCost] = useState(0)
 
@@ -59,21 +61,19 @@ export default function Tasks() {
   useEffect(() => {
     const activeTasks = tasks.filter(
       (t) =>
-        t.status === 'scheduled'
-        || t.status === 'pending'
-        || t.status === 'running'
-        || t.status === 'paused',
+        t.status === 'scheduled' ||
+        t.status === 'pending' ||
+        t.status === 'running' ||
+        t.status === 'paused'
     )
-    if (activeTasks.length === 0) {
-      return
-    }
+    if (activeTasks.length === 0) return
 
     const interval = setInterval(async () => {
-      if (document.visibilityState !== 'visible') {
-        return
-      }
+      if (document.visibilityState !== 'visible') return
       try {
-        const response = await taskApi.getProgressBatch(activeTasks.map((task) => task.run_id)) as any
+        const response = (await taskApi.getProgressBatch(
+          activeTasks.map((task) => task.run_id)
+        )) as any
         setProgressMap((prev) => ({ ...prev, ...(response.items || {}) }))
       } catch {
         // ignore polling errors
@@ -114,16 +114,6 @@ export default function Tasks() {
     }
   }
 
-  const handleRetry = async (runId: string) => {
-    try {
-      await taskApi.retry(runId)
-      message.success('失败任务已重新提交')
-      fetchTasks()
-    } catch (error: any) {
-      message.error(error.message || '重试失败')
-    }
-  }
-
   const handleRerun = async (runId: string) => {
     try {
       await taskApi.rerun(runId, { auto_start: true })
@@ -147,7 +137,7 @@ export default function Tasks() {
   const handleRecover = async (runId: string) => {
     try {
       await taskApi.recover(runId)
-      message.success('任务已恢复执行，将继续补齐未完成部分')
+      message.success('任务已恢复执行')
       fetchTasks()
     } catch (error: any) {
       message.error(error.message || '恢复执行失败')
@@ -156,7 +146,7 @@ export default function Tasks() {
 
   const handleReuseConfig = async (runId: string) => {
     try {
-      const response = await taskApi.getConfig(runId) as any
+      const response = (await taskApi.getConfig(runId)) as any
       navigate('/tasks/create', { state: { configContent: response.config_content } })
     } catch (error: any) {
       message.error(error.message || '载入历史配置失败')
@@ -178,26 +168,42 @@ export default function Tasks() {
       title: '任务名称',
       dataIndex: 'task_name',
       key: 'task_name',
-      ellipsis: true,
+      fixed: 'left' as const,
+      width: 200,
       render: (name: string, record: TaskWithCost) => {
         const displayName = name || '未命名任务'
-        if (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') {
-          return <a onClick={() => navigate(`/tasks/${record.run_id}`)}>{displayName}</a>
+        if (record.status === 'completed' || record.status === 'failed') {
+          return (
+            <a
+              onClick={() => navigate(`/tasks/${record.run_id}`)}
+              style={{ fontWeight: 500 }}
+            >
+              {displayName}
+            </a>
+          )
         }
-        return displayName
+        return <Text>{displayName}</Text>
       },
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 180,
+      width: 140,
       render: (status: string, record: TaskWithCost) => {
         if (status === 'completed') {
           return (
-            <Space>
+            <Space size="small">
               <StatusTag status={status as any} />
-              <Tag color="green" style={{ cursor: 'pointer' }} onClick={() => navigate(`/tasks/${record.run_id}`)}>
+              <Tag
+                color="green"
+                style={{
+                  cursor: 'pointer',
+                  borderRadius: 4,
+                  fontSize: 12,
+                }}
+                onClick={() => navigate(`/tasks/${record.run_id}`)}
+              >
                 <FileTextOutlined /> 报告
               </Tag>
             </Space>
@@ -211,25 +217,23 @@ export default function Tasks() {
       dataIndex: 'total_cost',
       key: 'total_cost',
       width: 120,
-      render: (cost: number, record: TaskWithCost) => {
-        if (typeof cost !== 'number' || cost <= 0) {
-          return '-'
-        }
-        return <Tag color="red">¥{cost.toFixed(4)} {record.currency || 'CNY'}</Tag>
+      render: (cost: number, _record: TaskWithCost) => {
+        if (typeof cost !== 'number' || cost <= 0) return '-'
+        return (
+          <Tag color="red" style={{ borderRadius: 4 }}>
+            ¥{cost.toFixed(4)}
+          </Tag>
+        )
       },
     },
     {
       title: '进度',
       key: 'progress',
-      width: 220,
+      width: 200,
       render: (_: unknown, record: TaskWithCost) => {
-        if (record.status !== 'running' && record.status !== 'paused') {
-          return '-'
-        }
+        if (record.status !== 'running' && record.status !== 'paused') return '-'
         const progress = progressMap[record.run_id]
-        if (!progress) {
-          return <Tag>加载中...</Tag>
-        }
+        if (!progress) return <Tag style={{ borderRadius: 4 }}>加载中...</Tag>
         return (
           <TaskProgressBar
             percent={progress.progress_percent}
@@ -242,48 +246,25 @@ export default function Tasks() {
       },
     },
     {
-      title: '计划时间',
-      dataIndex: 'scheduled_at',
-      key: 'scheduled_at',
-      width: 180,
-      render: (time?: string) => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '-'),
-    },
-    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 160,
-      render: (time: string) => (time ? dayjs(time).format('MM-DD HH:mm:ss') : '-'),
-    },
-    {
-      title: '失败原因',
-      dataIndex: 'error_message',
-      key: 'error_message',
-      width: 320,
-      ellipsis: true,
-      render: (errorMessage: string | undefined, record: TaskWithCost) => {
-        if (record.status !== 'failed' && record.status !== 'cancelled') {
-          return '-'
-        }
-        const text = (errorMessage || '').trim() || '未记录失败原因'
-        return (
-          <Tooltip title={text}>
-            <span>{text}</span>
-          </Tooltip>
-        )
-      },
+      render: (time: string) =>
+        time ? dayjs(time).format('MM-DD HH:mm:ss') : '-',
     },
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 180,
+      fixed: 'right' as const,
       render: (_: unknown, record: TaskWithCost) => (
-        <Space size="small">
+        <Space size={2}>
           <Tooltip title="查看详情">
             <Button
               type="text"
               size="small"
-              icon={<EyeOutlined />}
+              icon={<EyeOutlined style={{ color: 'var(--color-text)' }} />}
               onClick={() => navigate(`/tasks/${record.run_id}`)}
             />
           </Tooltip>
@@ -291,7 +272,7 @@ export default function Tasks() {
             <Button
               type="text"
               size="small"
-              icon={<CopyOutlined />}
+              icon={<CopyOutlined style={{ color: 'var(--color-text)' }} />}
               onClick={() => handleReuseConfig(record.run_id)}
             />
           </Tooltip>
@@ -300,52 +281,65 @@ export default function Tasks() {
               <Button
                 type="text"
                 size="small"
-                icon={<PlayCircleOutlined />}
+                icon={<PlayCircleOutlined style={{ color: '#52c41a' }} />}
                 onClick={() => handleStart(record.run_id)}
               />
             </Tooltip>
           )}
           {(record.status === 'failed' || record.status === 'cancelled') && (
-            <Tooltip title="恢复执行（续跑未完成部分）">
+            <Tooltip title="恢复执行">
               <Button
                 type="text"
                 size="small"
-                icon={<SyncOutlined />}
+                icon={<SyncOutlined style={{ color: '#1677ff' }} />}
                 onClick={() => handleRecover(record.run_id)}
               />
             </Tooltip>
           )}
-          {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
-            <Tooltip title="立即重跑（创建新任务）">
+          {(record.status === 'completed' ||
+            record.status === 'failed' ||
+            record.status === 'cancelled') && (
+            <Tooltip title="重新执行">
               <Button
                 type="text"
                 size="small"
-                icon={<RedoOutlined />}
+                icon={<RedoOutlined style={{ color: 'var(--color-text)' }} />}
                 onClick={() => handleRerun(record.run_id)}
               />
             </Tooltip>
           )}
-          {record.status === 'failed' && (
-            <Tooltip title="按失败任务重试接口重提">
-              <Button
-                type="text"
-                size="small"
-                icon={<RedoOutlined />}
-                onClick={() => handleRetry(record.run_id)}
-              />
-            </Tooltip>
-          )}
-          {(record.status === 'running' || record.status === 'paused' || record.status === 'scheduled' || record.status === 'pending') && (
-            <Popconfirm title="确定要取消此任务吗？" onConfirm={() => handleCancel(record.run_id)}>
+          {(record.status === 'running' ||
+            record.status === 'paused' ||
+            record.status === 'scheduled' ||
+            record.status === 'pending') && (
+            <Popconfirm
+              title="确定要取消此任务吗？"
+              onConfirm={() => handleCancel(record.run_id)}
+            >
               <Tooltip title="取消任务">
-                <Button type="text" size="small" danger icon={<StopOutlined />} />
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<StopOutlined />}
+                />
               </Tooltip>
             </Popconfirm>
           )}
-          {(record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled') && (
-            <Popconfirm title="确定要删除此任务吗？" onConfirm={() => handleDelete(record.run_id)}>
+          {(record.status === 'completed' ||
+            record.status === 'failed' ||
+            record.status === 'cancelled') && (
+            <Popconfirm
+              title="确定要删除此任务吗？"
+              onConfirm={() => handleDelete(record.run_id)}
+            >
               <Tooltip title="删除任务">
-                <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                />
               </Tooltip>
             </Popconfirm>
           )}
@@ -355,50 +349,118 @@ export default function Tasks() {
   ]
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Title level={4} style={{ margin: 0 }}>任务管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tasks/create')}>
+    <div className="fade-in">
+      {/* Page Header */}
+      <div className="page-header">
+        <div>
+          <Title level={3} style={{ margin: 0, marginBottom: 4 }}>
+            任务管理
+          </Title>
+          <Text type="secondary">管理和监控所有任务执行</Text>
+        </div>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => navigate('/tasks/create')}
+          style={{ borderRadius: 8 }}
+        >
           创建任务
         </Button>
       </div>
 
+      {/* Stats Row */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title="累计总费用"
-              value={totalCost}
-              precision={4}
-              prefix={<DollarOutlined style={{ color: '#cf1322' }} />}
-              suffix="元"
-              valueStyle={{ color: '#cf1322', fontSize: 20 }}
-            />
+          <Card
+            size="small"
+            style={{
+              borderRadius: 10,
+              border: '1px solid var(--color-border-secondary)',
+            }}
+          >
+            <Space>
+              <DollarOutlined style={{ color: '#cf1322', fontSize: 20 }} />
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  累计总费用
+                </Text>
+                <div style={{ fontWeight: 600, color: '#cf1322', fontSize: 18 }}>
+                  ¥{totalCost.toFixed(4)}
+                </div>
+              </div>
+            </Space>
           </Card>
         </Col>
         <Col span={8}>
-          <Card size="small">
-            <Statistic title="任务总数" value={total} suffix="个" />
+          <Card
+            size="small"
+            style={{
+              borderRadius: 10,
+              border: '1px solid var(--color-border-secondary)',
+            }}
+          >
+            <Space>
+              <DollarOutlined style={{ color: '#1677ff', fontSize: 20 }} />
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  任务总数
+                </Text>
+                <div style={{ fontWeight: 600, fontSize: 18 }}>{total}</div>
+              </div>
+            </Space>
           </Card>
         </Col>
         <Col span={8}>
-          <Card size="small">
-            <Statistic
-              title="平均任务费用"
-              value={total > 0 ? totalCost / total : 0}
-              precision={4}
-              prefix="¥"
-            />
+          <Card
+            size="small"
+            style={{
+              borderRadius: 10,
+              border: '1px solid var(--color-border-secondary)',
+            }}
+          >
+            <Space>
+              <DollarOutlined style={{ color: '#722ed1', fontSize: 20 }} />
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  平均任务费用
+                </Text>
+                <div style={{ fontWeight: 600, color: '#722ed1', fontSize: 18 }}>
+                  ¥{total > 0 ? (totalCost / total).toFixed(4) : '0.0000'}
+                </div>
+              </div>
+            </Space>
           </Card>
         </Col>
       </Row>
 
-      <Card>
-        <div style={{ marginBottom: 16, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+      {/* Main Table Card */}
+      <Card
+        style={{
+          borderRadius: 12,
+          border: '1px solid var(--color-border-secondary)',
+        }}
+      >
+        {/* Filters */}
+        <div
+          style={{
+            marginBottom: 16,
+            display: 'flex',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Input
+            placeholder="搜索任务名称"
+            prefix={<SearchOutlined />}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            style={{ width: 200, borderRadius: 8 }}
+            allowClear
+          />
           <Select
             placeholder="状态筛选"
             allowClear
-            style={{ width: 160 }}
+            style={{ width: 140 }}
             value={statusFilter}
             onChange={setStatusFilter}
             options={[
@@ -411,16 +473,26 @@ export default function Tasks() {
               { value: 'cancelled', label: '已取消' },
             ]}
           />
-          <Button icon={<ReloadOutlined />} onClick={fetchTasks}>
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={fetchTasks}
+            style={{ borderRadius: 8 }}
+          >
             刷新
           </Button>
         </div>
 
+        {/* Table */}
         <Table
           columns={columns}
-          dataSource={tasks}
+          dataSource={tasks.filter((t) =>
+            searchText
+              ? t.task_name?.toLowerCase().includes(searchText.toLowerCase())
+              : true
+          )}
           rowKey="run_id"
           loading={loading}
+          scroll={{ x: 1000 }}
           pagination={{
             current: page,
             pageSize,

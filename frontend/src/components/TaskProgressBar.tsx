@@ -1,4 +1,5 @@
 import { Progress, Space, Typography } from 'antd'
+import { CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 
@@ -17,6 +18,8 @@ export default function TaskProgressBar({
   total,
   size = 'default',
 }: TaskProgressBarProps) {
+  const isSmall = size === 'small'
+
   return (
     <div>
       <Progress
@@ -24,18 +27,52 @@ export default function TaskProgressBar({
         size={size}
         strokeColor={{
           '0%': '#52c41a',
-          '100%': '#1677ff',
+          '100%': '#73d13d',
         }}
+        trailColor="var(--color-border-secondary)"
         format={(p) => (
-          <span style={{ fontSize: size === 'small' ? 12 : 14 }}>
+          <span style={{ fontSize: isSmall ? 12 : 14, fontWeight: 500 }}>
             {p}%
           </span>
         )}
       />
-      <Space size="large" style={{ marginTop: 4 }}>
-        <Text type="success">成功: {successCount}</Text>
-        <Text type="danger">失败: {errorCount}</Text>
-        <Text type="secondary">总计: {total}</Text>
+      <Space size={isSmall ? 'small' : 'large'} style={{ marginTop: 4 }}>
+        <Text
+          style={{
+            color: '#52c41a',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: isSmall ? 12 : 14,
+          }}
+        >
+          <CheckCircleOutlined />
+          成功: {successCount}
+        </Text>
+        <Text
+          style={{
+            color: '#ff4d4f',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: isSmall ? 12 : 14,
+          }}
+        >
+          <CloseCircleOutlined />
+          失败: {errorCount}
+        </Text>
+        <Text
+          type="secondary"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontSize: isSmall ? 12 : 14,
+          }}
+        >
+          <FileTextOutlined />
+          总计: {total}
+        </Text>
       </Space>
     </div>
   )

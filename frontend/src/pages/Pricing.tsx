@@ -125,12 +125,14 @@ export default function Pricing() {
       title: '厂商',
       dataIndex: 'provider',
       key: 'provider',
+      fixed: 'left' as const,
       width: 100,
     },
     {
       title: '模型',
       dataIndex: 'model',
       key: 'model',
+      fixed: 'left' as const,
       width: 200,
     },
     {
@@ -164,6 +166,7 @@ export default function Pricing() {
       title: '操作',
       key: 'action',
       width: 80,
+      fixed: 'right' as const,
       render: (_: any, record: PricingRecord) => (
         <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
           <Button type="text" danger icon={<DeleteOutlined />} />
@@ -177,11 +180,15 @@ export default function Pricing() {
       title: '厂商',
       dataIndex: 'provider',
       key: 'provider',
+      fixed: 'left' as const,
+      width: 100,
     },
     {
       title: '模型',
       dataIndex: 'model',
       key: 'model',
+      fixed: 'left' as const,
+      width: 200,
     },
     {
       title: '请求数',
@@ -314,6 +321,7 @@ export default function Pricing() {
                   dataSource={providerFilter ? pricingList.filter((p) => p.provider === providerFilter) : pricingList}
                   rowKey="id"
                   loading={loading}
+                  scroll={{ x: 900 }}
                   pagination={{ pageSize: 10 }}
                   size="small"
                 />
@@ -353,6 +361,7 @@ export default function Pricing() {
                   dataSource={costSummary}
                   rowKey={(r) => `${r.provider}-${r.model}`}
                   loading={loading}
+                  scroll={{ x: 800 }}
                   pagination={false}
                   summary={(data) => {
                     const total = data.reduce((acc, cur) => acc + cur.total_cost, 0)
