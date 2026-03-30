@@ -92,6 +92,8 @@ export interface ExecutorProgress {
   avg_cost_per_request: number
   score: number
   conclusion: string
+  started_at: number
+  completed_at: number
 }
 
 export interface TaskTopologyNode {

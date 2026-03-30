@@ -847,6 +847,18 @@ export default function TaskDetail() {
                   </Space>
                 ),
               },
+              {
+                title: '开始时间',
+                dataIndex: 'started_at',
+                width: 160,
+                render: (value: number) => value ? dayjs.unix(value).format('HH:mm:ss') : '-',
+              },
+              {
+                title: '结束时间',
+                dataIndex: 'completed_at',
+                width: 160,
+                render: (value: number) => value ? dayjs.unix(value).format('HH:mm:ss') : '-',
+              },
               { title: '成功率', dataIndex: 'success_rate', width: 100, render: (value: number) => `${value.toFixed(1)}%` },
               { title: '输入 tokens', dataIndex: 'avg_input_tokens', width: 120, render: (value: number) => value.toFixed(1) },
               { title: '输出 tokens', dataIndex: 'avg_output_tokens', width: 120, render: (value: number) => value.toFixed(1) },

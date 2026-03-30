@@ -722,6 +722,11 @@ class TaskService:
             error_count = completed - success_count
             progress_percent = min(100.0, (completed / total) * 100) if total > 0 else 0.0
 
+            # Calculate executor start/end times
+            created_times = [int(record.created_at) for record in executor_records if hasattr(record, 'created_at') and record.created_at]
+            started_at = min(created_times) if created_times else 0
+            completed_at = max(created_times) if created_times else 0
+
             if total > 0 and completed >= total:
                 status = TaskStatus.FAILED.value if error_count > 0 else TaskStatus.COMPLETED.value
             elif completed > 0:
@@ -784,6 +789,8 @@ class TaskService:
                     "avg_cost_per_request": (sum(record.total_cost for record in executor_records) / completed) if completed else 0.0,
                     "score": score,
                     "conclusion": conclusion,
+                    "started_at": started_at,
+                    "completed_at": completed_at,
                 }
             )
 

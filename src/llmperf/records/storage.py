@@ -415,6 +415,8 @@ class Storage:
                     func.sum(case((ExecutionORM.status == 200, 1), else_=0)).label("success_count"),
                     func.sum(ExecutionORM.total_cost).label("total_cost"),
                     func.min(ExecutionORM.currency).label("currency"),
+                    func.min(ExecutionORM.created_at).label("started_at"),
+                    func.max(ExecutionORM.created_at).label("completed_at"),
                 )
                 .filter(ExecutionORM.run_id == run_id)
                 .group_by(ExecutionORM.executor_id)
@@ -431,6 +433,8 @@ class Storage:
                     "error_count": total - success,
                     "total_cost": float(r.total_cost or 0.0),
                     "currency": r.currency or "CNY",
+                    "started_at": int(r.started_at or 0),
+                    "completed_at": int(r.completed_at or 0),
                 })
             return result
 
