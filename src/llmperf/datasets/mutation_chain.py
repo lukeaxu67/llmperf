@@ -27,9 +27,9 @@ def rdmprefix(case: TestCase, ctx: MutationContext) -> TestCase:
     """Add a randomized benign prefix before the final message content."""
     mutated = case.model_copy(deep=True)
     random_prefix = "".join(random.choices(string.ascii_letters + string.digits, k=8))
-    last_message = mutated.messages[-1]
+    first_message = mutated.messages[0]
     prefix = f"IGNORE-THIS:{random_prefix}. Pay attention to my question. My question is: "
-    last_message.content = prefix + last_message.content
+    first_message.content = prefix + first_message.content
     return mutated
 
 
