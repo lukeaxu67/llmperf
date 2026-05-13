@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from llmperf.config.runtime import load_runtime_config
 from llmperf.datasets.sources.jsonl import parse_jsonl_test_case
-from llmperf.datasets.validator import validate_jsonl_content
+from llmperf.datasets.validator import DatasetValidator
 
 logger = logging.getLogger(__name__)
 
@@ -295,25 +296,31 @@ class DatasetService:
         columns: List[str] = []
         preview_records: List[Dict[str, Any]] = []
 
-        try:
-            text = content.decode(encoding)
-        except UnicodeDecodeError as e:
-            raise ValueError(f"Failed to decode file with encoding {encoding}: {e}") from e
-
         if file_type == DatasetType.JSONL:
-            validation = validate_jsonl_content(text)
-            if not validation.valid:
-                first_error = validation.errors[0].message if validation.errors else "Invalid JSONL content"
-                raise ValueError(first_error)
-            row_count = int(validation.statistics.get("total_records", 0))
+            validator = DatasetValidator()
             columns = ["id", "messages"]
-            for index, line in enumerate(text.splitlines()):
-                stripped = line.strip()
+            for index, raw_line in enumerate(content.splitlines()):
+                stripped = raw_line.strip()
                 if not stripped:
                     continue
-                preview_records.append(self._normalize_preview_jsonl_record(stripped, index))
+                try:
+                    line = stripped.decode(encoding)
+                except UnicodeDecodeError as e:
+                    raise ValueError(f"Failed to decode file with encoding {encoding}: {e}") from e
+                try:
+                    test_case = parse_jsonl_test_case(line, index=index)
+                except Exception as e:
+                    raise ValueError(f"Validation error at record {index + 1}: {e}") from e
+                errors = validator.validate_test_case(test_case, index)
+                fatal_errors = [error for error in errors if error.severity == "error"]
+                if fatal_errors:
+                    raise ValueError(fatal_errors[0].message)
+                row_count += 1
                 if len(preview_records) >= 5:
-                    break
+                    continue
+                preview_records.append(test_case.model_dump())
+            if row_count == 0:
+                raise ValueError("JSONL file is empty or has no data rows")
         elif file_type == DatasetType.CSV:
             temp_path = self._datasets_dir / f".tmp-validate-{int(time.time() * 1000)}.csv"
             try:
@@ -678,17 +685,20 @@ class DatasetService:
 
 # Global service instance
 _dataset_service: Optional[DatasetService] = None
+_dataset_service_lock = threading.Lock()
 
 
 def get_dataset_service() -> DatasetService:
     """Get or create dataset service instance."""
     global _dataset_service
-    if _dataset_service is None:
-        _dataset_service = DatasetService()
-    return _dataset_service
+    with _dataset_service_lock:
+        if _dataset_service is None:
+            _dataset_service = DatasetService()
+        return _dataset_service
 
 
 def set_dataset_service(service: DatasetService) -> None:
     """Set dataset service instance (for testing)."""
     global _dataset_service
-    _dataset_service = service
+    with _dataset_service_lock:
+        _dataset_service = service

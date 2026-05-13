@@ -16,6 +16,9 @@ from pydantic import BaseModel, Field
 from ..services.task_service import TaskService, TaskStatus, TaskInfo
 from ..services.pricing_service import PricingService
 from ..services.run_config_service import load_run_config_content
+from llmperf.datasets.dataset_source_registry import create_source
+from llmperf.providers import base as provider_base
+from llmperf.providers.base import ProviderRequest
 from llmperf.config.runtime import load_runtime_config
 from llmperf.records.storage import Storage
 
@@ -593,13 +596,8 @@ async def get_task_stats(run_id: str):
     summary="Get quick report",
 )
 async def get_quick_report(run_id: str):
-    """Get quick report for a completed task.
-
-    This endpoint always recalculates the report from the latest database data.
-    No caching is applied to ensure fresh results on each request.
-    """
+    """Get a quick report snapshot for a task."""
     service = get_service()
-    # Always recalculate report from database - no caching
     report = service.get_quick_report(run_id)
 
     if not report:
@@ -872,8 +870,6 @@ async def test_run(request: TestRunRequest = Body(...)):
     """
     import time
     import concurrent.futures
-    from llmperf.providers.base import create_provider
-    from llmperf.datasets.dataset_source_registry import create_source
 
     try:
         # Parse config
@@ -899,10 +895,9 @@ async def test_run(request: TestRunRequest = Body(...)):
             )
 
         first_record = records[0]
-        from llmperf.providers.base import ProviderRequest
 
         def _run_executor(executor_config) -> Dict[str, Any]:
-            provider = create_provider(
+            provider = provider_base.create_provider(
                 executor_config.type,
                 executor_config.impl or "default",
                 executor_config.type,

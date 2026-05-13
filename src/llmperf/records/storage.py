@@ -176,7 +176,10 @@ class Storage:
             session.commit()
 
     def insert_record(self, record: RunRecord) -> None:
-        payload = ExecutionORM(
+        self.insert_records([record])
+
+    def _record_to_payload(self, record: RunRecord) -> ExecutionORM:
+        return ExecutionORM(
             run_id=record.run_id,
             executor_id=record.executor_id,
             dataset_row_id=record.dataset_row_id,
@@ -205,6 +208,11 @@ class Storage:
             extra_json=dumps(record.extra),
             created_at=int(time.time()),
         )
+
+    def insert_records(self, records: list[RunRecord]) -> None:
+        if not records:
+            return
+        payloads = [self._record_to_payload(record) for record in records]
         # Retry logic for SQLITE_BUSY errors
         max_retries = 5
         try:
@@ -222,7 +230,7 @@ class Storage:
             while True:
                 try:
                     with self.db.session() as session:
-                        session.add(payload)
+                        session.add_all(payloads)
                         session.commit()
                     break
                 except OperationalError as e:
@@ -417,6 +425,8 @@ class Storage:
                     func.min(ExecutionORM.currency).label("currency"),
                     func.min(ExecutionORM.created_at).label("started_at"),
                     func.max(ExecutionORM.created_at).label("completed_at"),
+                    func.avg(ExecutionORM.qtokens).label("avg_input_tokens"),
+                    func.avg(ExecutionORM.atokens).label("avg_output_tokens"),
                 )
                 .filter(ExecutionORM.run_id == run_id)
                 .group_by(ExecutionORM.executor_id)
@@ -435,6 +445,8 @@ class Storage:
                     "currency": r.currency or "CNY",
                     "started_at": int(r.started_at or 0),
                     "completed_at": int(r.completed_at or 0),
+                    "avg_input_tokens": float(r.avg_input_tokens or 0.0),
+                    "avg_output_tokens": float(r.avg_output_tokens or 0.0),
                 })
             return result
 
@@ -591,19 +603,22 @@ class Storage:
             return True
 
     def get_total_cost(self) -> dict:
-        """Get total cost across all runs."""
-        with self.db.session() as session:
-            # Sum from runs table
-            runs = session.query(RunORM).all()
-            total_cost = sum(getattr(r, "total_cost", 0.0) for r in runs)
-            run_count = session.query(RunORM).count()
+        """Get total cost across all runs from run snapshots.
 
-            # Also calculate from executions for accuracy
+        This deliberately avoids scanning executions. Run costs are updated when
+        a task completes; historical databases can be backfilled separately.
+        """
+        with self.db.session() as session:
             from sqlalchemy import func
-            exec_total = session.query(func.sum(ExecutionORM.total_cost)).scalar() or 0.0
+            row = session.query(
+                func.sum(RunORM.total_cost),
+                func.count(RunORM.id),
+            ).one()
+            total_cost = float(row[0] or 0.0)
+            run_count = int(row[1] or 0)
 
             return {
-                "total_cost": max(total_cost, exec_total),
+                "total_cost": total_cost,
                 "run_count": run_count,
                 "currency": "CNY",
             }

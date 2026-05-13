@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -22,22 +24,25 @@ logger = logging.getLogger(__name__)
 # Global service instances
 _task_service: Optional[TaskService] = None
 _analysis_service: Optional[AnalysisService] = None
+_service_lock = threading.Lock()
 
 
 def get_task_service() -> TaskService:
     """Get or create task service instance."""
     global _task_service
-    if _task_service is None:
-        _task_service = TaskService()
-    return _task_service
+    with _service_lock:
+        if _task_service is None:
+            _task_service = TaskService()
+        return _task_service
 
 
 def get_analysis_service() -> AnalysisService:
     """Get or create analysis service instance."""
     global _analysis_service
-    if _analysis_service is None:
-        _analysis_service = AnalysisService()
-    return _analysis_service
+    with _service_lock:
+        if _analysis_service is None:
+            _analysis_service = AnalysisService()
+        return _analysis_service
 
 
 def get_dataset_service():
@@ -51,29 +56,49 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("Starting LLMPerf Web API")
+    stop_warmup = threading.Event()
 
-    # Initialize services
-    get_task_service()
+    # Warm task service in the background. This restores scheduled tasks without
+    # blocking lightweight endpoints such as health checks and test-run.
+    def _warm_task_service() -> None:
+        if stop_warmup.wait(1):
+            return
+        try:
+            get_task_service()
+        except Exception as exc:
+            logger.warning("Failed to initialize task service: %s", exc)
 
-    # Initialize dataset service and scan datasets
-    try:
-        dataset_service = get_dataset_service()
-        scanned = dataset_service.scan()
-        logger.info(f"Dataset service initialized with {len(scanned)} datasets")
-    except Exception as e:
-        logger.warning("Failed to initialize dataset service: %s", e)
+    threading.Thread(target=_warm_task_service, daemon=True, name="task-service-warmup").start()
 
-    # Import notification channels to register them
-    try:
-        from ..notifications import channels  # noqa: F401
-    except ImportError:
-        pass
+    # Initialize dataset service in the background; dataset APIs lazily scan if
+    # the warmup has not completed yet.
+    def _warm_dataset_service() -> None:
+        if stop_warmup.wait(1):
+            return
+        try:
+            dataset_service = get_dataset_service()
+            scanned = dataset_service.scan()
+            logger.info(f"Dataset service initialized with {len(scanned)} datasets")
+        except Exception as e:
+            logger.warning("Failed to initialize dataset service: %s", e)
 
-    # Import exporters to register them
-    try:
-        from ..export import CSVExporter, JSONLExporter, HTMLReportExporter  # noqa: F401
-    except ImportError:
-        pass
+    threading.Thread(target=_warm_dataset_service, daemon=True, name="dataset-service-warmup").start()
+
+    # Import heavier registries in the background. Their APIs import lazily too,
+    # so startup should not wait on optional channels/exporters.
+    def _warm_registries() -> None:
+        if stop_warmup.wait(1):
+            return
+        try:
+            from ..notifications import channels  # noqa: F401
+        except ImportError:
+            pass
+        try:
+            from ..export import CSVExporter, JSONLExporter, HTMLReportExporter  # noqa: F401
+        except ImportError:
+            pass
+
+    threading.Thread(target=_warm_registries, daemon=True, name="registry-warmup").start()
 
     # Import providers to register them (especially mock for testing)
     try:
@@ -84,6 +109,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    stop_warmup.set()
     logger.info("Shutting down LLMPerf Web API")
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import os
 import time
 from typing import Dict, Iterable, List, Optional
 
@@ -86,98 +87,125 @@ class BaseExecutor:
             logger.info("Executor %s starting", self.config.id)
 
         records: List[RunRecord] = []
+        pending_writes: List[RunRecord] = []
         max_workers = max(1, self.config.concurrency)
         meta_base = dict(exec_meta or {})
+        try:
+            write_batch_size = max(1, int(os.getenv("DB_WRITE_BATCH_SIZE", "20")))
+        except (TypeError, ValueError):
+            write_batch_size = 20
+        try:
+            write_flush_interval = max(0.0, float(os.getenv("DB_WRITE_FLUSH_INTERVAL", "1.0")))
+        except (TypeError, ValueError):
+            write_flush_interval = 1.0
+        last_flush_ts = time.time()
+
+        def _flush_writes(force: bool = False) -> None:
+            nonlocal last_flush_ts
+            if not pending_writes:
+                return
+            if (
+                force
+                or len(pending_writes) >= write_batch_size
+                or (write_flush_interval and time.time() - last_flush_ts >= write_flush_interval)
+            ):
+                storage.insert_records(list(pending_writes))
+                pending_writes.clear()
+                last_flush_ts = time.time()
 
         next_progress = 0.1
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_meta: Dict[concurrent.futures.Future[RunRecord], Dict[str, object]] = {}
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_meta: Dict[concurrent.futures.Future[RunRecord], Dict[str, object]] = {}
 
-            dispatched = 0
-            completed = 0
-            row_index = 0
-            iterator = iter(dataset)
+                dispatched = 0
+                completed = 0
+                row_index = 0
+                iterator = iter(dataset)
 
-            def _can_dispatch_more() -> bool:
-                if max_rows is not None and dispatched >= max_rows:
-                    return False
-                if deadline_ts is not None and time.time() >= deadline_ts:
-                    return False
-                return True
-
-            def _submit_next() -> bool:
-                nonlocal dispatched, row_index
-                if not _can_dispatch_more():
-                    return False
-                row = None
-                while True:
-                    try:
-                        candidate = next(iterator)
-                    except StopIteration:
+                def _can_dispatch_more() -> bool:
+                    if max_rows is not None and dispatched >= max_rows:
                         return False
-                    if candidate.id in completed_row_ids:
-                        continue
-                    row = candidate
-                    break
-                limiter.acquire()
-                if not _can_dispatch_more():
-                    return False
-                row_meta = dict(meta_base)
-                row_meta["row_index"] = row_index
-                row_index += 1
-                metadata = row.metadata or {}
-                if "pass_index" in metadata:
-                    row_meta["pass_index"] = metadata["pass_index"]
-                if "base_id" in metadata:
-                    row_meta["base_id"] = metadata["base_id"]
-                fut = executor.submit(self.process_row, run_id, row, price)
-                future_meta[fut] = row_meta
-                dispatched += 1
-                return True
+                    if deadline_ts is not None and time.time() >= deadline_ts:
+                        return False
+                    return True
 
-            for _ in range(max_workers):
-                if not _submit_next():
-                    break
+                def _submit_next() -> bool:
+                    nonlocal dispatched, row_index
+                    if not _can_dispatch_more():
+                        return False
+                    row = None
+                    while True:
+                        try:
+                            candidate = next(iterator)
+                        except StopIteration:
+                            return False
+                        if candidate.id in completed_row_ids:
+                            continue
+                        row = candidate
+                        break
+                    limiter.acquire()
+                    if not _can_dispatch_more():
+                        return False
+                    row_meta = dict(meta_base)
+                    row_meta["row_index"] = row_index
+                    row_index += 1
+                    metadata = row.metadata or {}
+                    if "pass_index" in metadata:
+                        row_meta["pass_index"] = metadata["pass_index"]
+                    if "base_id" in metadata:
+                        row_meta["base_id"] = metadata["base_id"]
+                    fut = executor.submit(self.process_row, run_id, row, price)
+                    future_meta[fut] = row_meta
+                    dispatched += 1
+                    return True
 
-            while future_meta:
-                done, _pending = concurrent.futures.wait(
-                    set(future_meta.keys()),
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                for fut in done:
-                    meta = future_meta.pop(fut, None) or {}
-                    record = fut.result()
-                    if meta:
-                        extra = dict(record.extra or {})
-                        exec_info = extra.get("execution_mode")
-                        if not isinstance(exec_info, dict):
-                            exec_info = {}
-                        exec_info.update(meta)
-                        extra["execution_mode"] = exec_info
-                        record.extra = extra
-                    records.append(record)
-                    storage.insert_record(record)
-                    completed += 1
+                for _ in range(max_workers):
+                    if not _submit_next():
+                        break
 
-                    if total_rows and total_rows > 0:
-                        fraction = completed / total_rows
-                        if fraction >= next_progress:
-                            elapsed = time.time() - start_ts
-                            remaining = total_rows - completed
-                            eta = (elapsed / completed * remaining) if completed else 0.0
-                            logger.info(
-                                "Executor %s progress: %d/%d (%.0f%%), elapsed=%.1fs, eta=%.1fs",
-                                self.config.id,
-                                completed,
-                                total_rows,
-                                fraction * 100.0,
-                                elapsed,
-                                eta,
-                            )
-                            next_progress += 0.1
+                while future_meta:
+                    done, _pending = concurrent.futures.wait(
+                        set(future_meta.keys()),
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    for fut in done:
+                        meta = future_meta.pop(fut, None) or {}
+                        record = fut.result()
+                        if meta:
+                            extra = dict(record.extra or {})
+                            exec_info = extra.get("execution_mode")
+                            if not isinstance(exec_info, dict):
+                                exec_info = {}
+                            exec_info.update(meta)
+                            extra["execution_mode"] = exec_info
+                            record.extra = extra
+                        records.append(record)
+                        pending_writes.append(record)
+                        _flush_writes()
+                        completed += 1
 
-                    if _can_dispatch_more():
-                        _submit_next()
+                        if total_rows and total_rows > 0:
+                            fraction = completed / total_rows
+                            if fraction >= next_progress:
+                                elapsed = time.time() - start_ts
+                                remaining = total_rows - completed
+                                eta = (elapsed / completed * remaining) if completed else 0.0
+                                logger.info(
+                                    "Executor %s progress: %d/%d (%.0f%%), elapsed=%.1fs, eta=%.1fs",
+                                    self.config.id,
+                                    completed,
+                                    total_rows,
+                                    fraction * 100.0,
+                                    elapsed,
+                                    eta,
+                                )
+                                next_progress += 0.1
+
+                        if _can_dispatch_more():
+                            _submit_next()
+        finally:
+            _flush_writes(force=True)
         return records
 
 

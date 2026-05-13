@@ -86,6 +86,10 @@ function executorStatusColor(status: string): string {
   }
 }
 
+function isActiveTaskStatus(status?: string): boolean {
+  return !!status && ['scheduled', 'pending', 'running', 'paused'].includes(status)
+}
+
 export default function TaskDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -132,11 +136,12 @@ export default function TaskDetail() {
     }
   }
 
-  const loadTaskAndProgress = async (runId: string, silent = false) => {
+  const loadTaskAndProgress = async (runId: string, silent = false): Promise<Task | null> => {
     const { controller, version } = startRequest('bundle')
     if (!silent) {
       setLoading(true)
     }
+    let nextTask: Task | null = null
     try {
       const [taskResult, progressResult] = await Promise.allSettled([
         taskApi.get(runId, { signal: controller.signal }),
@@ -144,22 +149,25 @@ export default function TaskDetail() {
       ])
 
       if (version !== requestVersionRef.current.bundle) {
-        return
+        return null
       }
 
       if (taskResult.status === 'fulfilled') {
-        setTask(taskResult.value as any as Task)
+        nextTask = taskResult.value as any as Task
+        setTask(nextTask)
       }
       if (progressResult.status === 'fulfilled') {
         setProgress(progressResult.value as any as TaskProgress)
       } else {
         setProgress(null)
       }
+      return nextTask
     } catch (error: any) {
       if (isCanceledRequest(error)) {
-        return
+        return null
       }
       message.error(error.message || '获取任务详情失败')
+      return null
     } finally {
       if (version === requestVersionRef.current.bundle) {
         setLoading(false)
@@ -216,9 +224,10 @@ export default function TaskDetail() {
   }
 
   const loadTaskBundle = async (runId: string, silent = false) => {
+    const nextTask = await loadTaskAndProgress(runId, silent)
+    const shouldLoadReport = nextTask ? !isActiveTaskStatus(nextTask.status) : false
     await Promise.all([
-      loadTaskAndProgress(runId, silent),
-      loadReport(runId, true),
+      shouldLoadReport ? loadReport(runId, true) : Promise.resolve(),
       loadTaskErrors(runId, true),
     ])
   }
@@ -242,19 +251,21 @@ export default function TaskDetail() {
     if (!id) {
       return
     }
-    if (!task || !['scheduled', 'pending', 'running', 'paused'].includes(task.status)) {
+    if (!task || !isActiveTaskStatus(task.status)) {
       return
     }
 
-    const fastTimer = window.setInterval(() => {
+    const fastTimer = window.setInterval(async () => {
       if (document.visibilityState === 'visible') {
-        void loadTaskAndProgress(id, true)
+        const nextTask = await loadTaskAndProgress(id, true)
+        if (nextTask && !isActiveTaskStatus(nextTask.status)) {
+          void loadReport(id, true)
+        }
       }
     }, 5000)
 
     const slowTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        void loadReport(id, true)
         void loadTaskErrors(id, true)
       }
     }, 20000)
@@ -690,8 +701,8 @@ export default function TaskDetail() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="当前报告基于已落库数据实时计算"
-          description="即使任务还没有完全跑完，页面也会展示阶段性指标、执行器结论和错误分布。每次请求都会重新计算，不使用缓存。"
+          message="运行中展示轻量实时进度"
+          description="任务运行期间不再自动重算完整报告。需要阶段性快照时可手动刷新报告，任务完成后会展示最终报告。"
         />
       )}
 

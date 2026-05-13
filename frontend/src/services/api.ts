@@ -414,6 +414,7 @@ export const datasetApi = {
     formData.append('encoding', options?.encoding || 'utf-8')
     return api.post<DatasetValidationResult>('/datasets/validate', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 300000,
     })
   },
 
@@ -433,6 +434,7 @@ export const datasetApi = {
     formData.append('encoding', options?.encoding || 'utf-8')
     return api.post('/datasets/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000,
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total)

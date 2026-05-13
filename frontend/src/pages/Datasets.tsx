@@ -37,6 +37,8 @@ type UploadFormValues = {
   encoding?: string
 }
 
+const VALIDATE_BEFORE_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024
+
 export default function Datasets() {
   const [loading, setLoading] = useState(false)
   const [datasets, setDatasets] = useState<Dataset[]>([])
@@ -97,9 +99,12 @@ export default function Datasets() {
       const encoding = values.encoding || 'utf-8'
       setUploading(true)
       setUploadProgress(0)
+      setValidation(null)
       try {
-        const validateResult = await datasetApi.validate(file, { encoding }) as any
-        setValidation(validateResult)
+        if (file.size <= VALIDATE_BEFORE_UPLOAD_LIMIT_BYTES) {
+          const validateResult = await datasetApi.validate(file, { encoding }) as any
+          setValidation(validateResult)
+        }
         await datasetApi.upload(
           file,
           {

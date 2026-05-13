@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Float, Integer, String, Text, create_engine, text
+from sqlalchemy import Float, Integer, String, Text, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
 class Base(DeclarativeBase):
     pass
+
+
+_metadata_init_lock = threading.Lock()
 
 
 class RunORM(Base):
@@ -104,18 +108,24 @@ class Database:
         self.db_path = Path(db_path)
         if self.db_path.parent and not self.db_path.parent.exists():
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_engine(f"sqlite:///{self.db_path}", future=True)
+        self.engine = create_engine(
+            f"sqlite:///{self.db_path}",
+            future=True,
+            connect_args={"timeout": 30},
+        )
+        self._register_connection_pragmas()
         self._init_pragmas()
-        self._legacy_responses_column = self._detect_legacy_responses_column()
-        Base.metadata.create_all(self.engine)
-        self._ensure_cache_cost_column()
-        self._ensure_run_snapshot_columns()
-        self._ensure_normalized_status_column()
-        self._ensure_request_params_column()
-        self._ensure_provider_column()
-        self._ensure_pricing_history_table()
-        self._ensure_execution_price_snapshot_columns()
-        self._ensure_execution_indexes()
+        with _metadata_init_lock:
+            self._legacy_responses_column = self._detect_legacy_responses_column()
+            Base.metadata.create_all(self.engine)
+            self._ensure_cache_cost_column()
+            self._ensure_run_snapshot_columns()
+            self._ensure_normalized_status_column()
+            self._ensure_request_params_column()
+            self._ensure_provider_column()
+            self._ensure_pricing_history_table()
+            self._ensure_execution_price_snapshot_columns()
+            self._ensure_execution_indexes()
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=False)
 
     def _init_pragmas(self) -> None:
@@ -133,6 +143,20 @@ class Database:
                 conn.commit()
         except Exception:
             pass  # Silently ignore PRAGMA errors
+
+    def _register_connection_pragmas(self) -> None:
+        """Apply SQLite PRAGMAs to every pooled connection."""
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA temp_store=MEMORY")
+                cursor.close()
+            except Exception:
+                pass
 
     def session(self) -> Session:
         return self.Session()
@@ -365,6 +389,31 @@ class Database:
                     conn.execute(text("CREATE INDEX idx_exec_run_status ON executions(run_id, status)"))
                 if "idx_exec_created_at" not in existing:
                     conn.execute(text("CREATE INDEX idx_exec_created_at ON executions(created_at)"))
+                if "idx_exec_run_id_id" not in existing:
+                    conn.execute(text("CREATE INDEX idx_exec_run_id_id ON executions(run_id, id)"))
+                if "idx_exec_run_error_id" not in existing:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX idx_exec_run_error_id "
+                            "ON executions(run_id, id DESC) WHERE status != 200"
+                        )
+                    )
+                if "idx_exec_status_created_provider_model" not in existing:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX idx_exec_status_created_provider_model "
+                            "ON executions(status, created_at, provider, model)"
+                        )
+                    )
+                if "idx_exec_provider_model_created" not in existing:
+                    conn.execute(
+                        text(
+                            "CREATE INDEX idx_exec_provider_model_created "
+                            "ON executions(provider, model, created_at)"
+                        )
+                    )
+                if "idx_runs_created_at" not in existing:
+                    conn.execute(text("CREATE INDEX idx_runs_created_at ON runs(created_at DESC)"))
                 conn.commit()
         except Exception:
             pass
