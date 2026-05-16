@@ -88,6 +88,9 @@ export interface ExecutorProgress {
   avg_total_time: number
   avg_token_per_second: number
   avg_token_per_second_with_calltime: number
+  avg_tokens_per_frame: number
+  avg_first_frame_chars: number
+  avg_cache_ratio: number
   cost: number
   avg_cost_per_request: number
   score: number
@@ -167,6 +170,9 @@ export interface TaskStats {
   avg_token_throughput: number
   avg_token_per_second: number
   avg_token_per_second_with_calltime: number
+  avg_tokens_per_frame: number
+  avg_first_frame_chars: number
+  avg_cache_ratio: number
   avg_input_tokens: number
   avg_output_tokens: number
   total_input_tokens: number
@@ -535,6 +541,9 @@ export interface DetailedReport {
     p95_total_time?: number
     avg_tps: number
     avg_tps_with_ttft?: number
+    avg_tokens_per_frame?: number
+    avg_first_frame_chars?: number
+    avg_cache_ratio?: number
     avg_input_tokens?: number
     avg_output_tokens?: number
     total_cost: number

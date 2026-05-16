@@ -23,6 +23,9 @@ export interface DetailedReport {
     p95_ttft: number
     p99_ttft: number
     avg_tps: number
+    avg_tokens_per_frame?: number
+    avg_first_frame_chars?: number
+    avg_cache_ratio?: number
     total_cost: number
     currency: string
     total_input_tokens: number
@@ -35,6 +38,9 @@ export interface DetailedReport {
     avg_ttft: number
     p95_ttft: number
     avg_tps: number
+    avg_tokens_per_frame?: number
+    avg_first_frame_chars?: number
+    avg_cache_ratio?: number
     cost: number
     avg_output_tokens: number
   }>

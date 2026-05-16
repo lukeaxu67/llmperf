@@ -37,6 +37,8 @@ def create_test_records(count: int = 10) -> list[RunRecord]:
             total_cost=0.003 * (i + 1),
             currency="USD",
             action_times=[1000, 1100 + i * 10, 2000 + i * 20],
+            content=["first", "second"],
+            content_times=[1000, 1100 + i * 10, 2000 + i * 20],
         )
         records.append(record)
     return records
@@ -115,6 +117,8 @@ class TestJSONLExporter:
                 assert "run_id" in data
                 assert "tokens" in data
                 assert "performance" in data
+                assert "tokens_per_frame" in data["performance"]
+                assert "first_frame_chars" in data["performance"]
 
     def test_export_with_compression(self, tmp_path):
         """Test JSONL export with gzip compression."""

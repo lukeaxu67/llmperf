@@ -207,6 +207,42 @@ class RunRecord:
     def token_throughput(self) -> float:
         return (self.atokens + self.qtokens) * 1e3 / self.session_time
 
+    def _payload_segments_with_times(self) -> List[tuple[int, int, str]]:
+        segments: List[tuple[int, int, str]] = []
+        sequence = 0
+        for values, times in (
+            (self.reasoning, self.reasoning_times),
+            (self.content, self.content_times),
+        ):
+            for index, text in enumerate(values or []):
+                if not text:
+                    sequence += 1
+                    continue
+                ts_index = index + 1
+                ts = times[ts_index] if len(times or []) > ts_index else sequence
+                segments.append((int(ts), sequence, text))
+                sequence += 1
+        segments.sort(key=lambda item: (item[0], item[1]))
+        return segments
+
+    @property
+    def payload_frame_count(self) -> int:
+        return len(self._payload_segments_with_times())
+
+    @property
+    def tokens_per_frame(self) -> float:
+        frame_count = self.payload_frame_count
+        if frame_count <= 0 or self.atokens <= 0:
+            return 0.0
+        return self.atokens / frame_count
+
+    @property
+    def first_frame_chars(self) -> int:
+        segments = self._payload_segments_with_times()
+        if not segments:
+            return 0
+        return get_word_num(segments[0][2])
+
     @property
     def token_throughput_with_calltime(self) -> float:
         if len(self.action_times) < 2:

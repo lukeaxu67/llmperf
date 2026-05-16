@@ -134,6 +134,9 @@ class TaskStatsResponse(BaseModel):
     avg_token_throughput: float
     avg_token_per_second: float = 0.0
     avg_token_per_second_with_calltime: float = 0.0
+    avg_tokens_per_frame: float = 0.0
+    avg_first_frame_chars: float = 0.0
+    avg_cache_ratio: float = 0.0
     avg_input_tokens: float = 0.0
     avg_output_tokens: float = 0.0
     total_input_tokens: int = 0
@@ -575,6 +578,9 @@ async def get_task_stats(run_id: str):
         avg_token_throughput=stats.get("avg_token_throughput", 0.0),
         avg_token_per_second=stats.get("avg_token_per_second", 0.0),
         avg_token_per_second_with_calltime=stats.get("avg_token_per_second_with_calltime", 0.0),
+        avg_tokens_per_frame=stats.get("avg_tokens_per_frame", 0.0),
+        avg_first_frame_chars=stats.get("avg_first_frame_chars", 0.0),
+        avg_cache_ratio=stats.get("avg_cache_ratio", 0.0),
         avg_input_tokens=stats.get("avg_input_tokens", 0.0),
         avg_output_tokens=stats.get("avg_output_tokens", 0.0),
         total_input_tokens=stats.get("total_input_tokens", 0),
@@ -1147,6 +1153,10 @@ async def export_task_results(
             "ctokens",
             "ttft_ms",
             "total_time_ms",
+            "payload_frame_count",
+            "tokens_per_frame",
+            "first_frame_chars",
+            "cache_ratio",
             "prompt_cost",
             "completion_cost",
             "cache_cost",
@@ -1193,6 +1203,10 @@ async def export_task_results(
                 "ctokens": record.ctokens,
                 "ttft_ms": record.first_resp_time,
                 "total_time_ms": record.last_resp_time,
+                "payload_frame_count": record.payload_frame_count,
+                "tokens_per_frame": round(record.tokens_per_frame, 4),
+                "first_frame_chars": record.first_frame_chars,
+                "cache_ratio": round(record.cache_ratio, 6),
                 "prompt_cost": round(record.prompt_cost, 6),
                 "completion_cost": round(record.completion_cost, 6),
                 "cache_cost": round(record.cache_cost, 6),
@@ -1249,6 +1263,10 @@ async def export_task_results(
                     "ctokens": record.ctokens,
                     "ttft_ms": record.first_resp_time,
                     "total_time_ms": record.last_resp_time,
+                    "payload_frame_count": record.payload_frame_count,
+                    "tokens_per_frame": record.tokens_per_frame,
+                    "first_frame_chars": record.first_frame_chars,
+                    "cache_ratio": record.cache_ratio,
                     "cost": record.total_cost,
                     "currency": record.currency,
                     "model": record.model,
@@ -1311,6 +1329,10 @@ async def export_batch_results(
             "ctokens",
             "ttft_ms",
             "total_time_ms",
+            "payload_frame_count",
+            "tokens_per_frame",
+            "first_frame_chars",
+            "cache_ratio",
             "total_cost",
             "currency",
             "created_at",
@@ -1349,6 +1371,10 @@ async def export_batch_results(
                 "ctokens": record.ctokens,
                 "ttft_ms": record.first_resp_time,
                 "total_time_ms": record.last_resp_time,
+                "payload_frame_count": record.payload_frame_count,
+                "tokens_per_frame": round(record.tokens_per_frame, 4),
+                "first_frame_chars": record.first_frame_chars,
+                "cache_ratio": round(record.cache_ratio, 6),
                 "total_cost": round(record.total_cost, 6),
                 "currency": record.currency,
                 "created_at": record.created_at,
@@ -1396,6 +1422,10 @@ async def export_batch_results(
                     "ctokens": record.ctokens,
                     "ttft_ms": record.first_resp_time,
                     "total_time_ms": record.last_resp_time,
+                    "payload_frame_count": record.payload_frame_count,
+                    "tokens_per_frame": record.tokens_per_frame,
+                    "first_frame_chars": record.first_frame_chars,
+                    "cache_ratio": record.cache_ratio,
                     "cost": record.total_cost,
                     "currency": record.currency,
                     "model": record.model,

@@ -666,8 +666,11 @@ def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkey
             status=200,
             qtokens=10,
             atokens=20,
+            ctokens=2,
+            usage={"prompt_tokens": 10, "prompt_tokens_details": {"cached_tokens": 2}},
             action_times=[0, 100, 1100],
-            content=["ok"],
+            content=["first", "second"],
+            content_times=[0, 100, 600],
         )
     )
 
@@ -678,6 +681,15 @@ def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkey
     assert updated.executors[0]["avg_total_time"] == 1100
     assert updated.executors[0]["avg_token_per_second"] == 20
     assert round(updated.executors[0]["avg_token_per_second_with_calltime"], 2) == 18.18
+    assert updated.executors[0]["avg_tokens_per_frame"] == 10
+    assert updated.executors[0]["avg_first_frame_chars"] > 0
+    assert updated.executors[0]["avg_cache_ratio"] == 0.2
+
+    stats = service.get_stats(run_id)
+    assert stats is not None
+    assert stats["avg_tokens_per_frame"] == 10
+    assert stats["avg_first_frame_chars"] > 0
+    assert stats["avg_cache_ratio"] == 0.2
 
 
 def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):

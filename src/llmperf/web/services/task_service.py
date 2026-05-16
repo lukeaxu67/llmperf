@@ -752,6 +752,21 @@ class TaskService:
                 for record in success_records
                 if record.token_per_second_with_calltime > 0
             ]
+            tokens_per_frame = [
+                float(record.tokens_per_frame)
+                for record in success_records
+                if record.tokens_per_frame > 0
+            ]
+            first_frame_chars = [
+                float(record.first_frame_chars)
+                for record in success_records
+                if record.first_frame_chars > 0
+            ]
+            cache_ratios = [
+                float(record.cache_ratio)
+                for record in success_records
+                if record.cache_ratio >= 0
+            ]
 
             completed = len(executor_records)
             total = dataset_total
@@ -822,6 +837,9 @@ class TaskService:
                     "avg_total_time": _avg(total_times),
                     "avg_token_per_second": _avg(tps),
                     "avg_token_per_second_with_calltime": _avg(tps_with_ttft),
+                    "avg_tokens_per_frame": _avg(tokens_per_frame),
+                    "avg_first_frame_chars": _avg(first_frame_chars),
+                    "avg_cache_ratio": _avg(cache_ratios),
                     "cost": sum(record.total_cost for record in executor_records),
                     "avg_cost_per_request": (sum(record.total_cost for record in executor_records) / completed) if completed else 0.0,
                     "score": score,
@@ -932,6 +950,9 @@ class TaskService:
                     "avg_total_time": 0.0,
                     "avg_token_per_second": 0.0,
                     "avg_token_per_second_with_calltime": 0.0,
+                    "avg_tokens_per_frame": 0.0,
+                    "avg_first_frame_chars": 0.0,
+                    "avg_cache_ratio": 0.0,
                     "cost": cost,
                     "avg_cost_per_request": (cost / completed) if completed else 0.0,
                     "score": score,
@@ -1964,6 +1985,9 @@ class TaskService:
             for r in successful
             if r.token_per_second_with_calltime > 0
         ]
+        tokens_per_frame = [float(r.tokens_per_frame) for r in successful if r.tokens_per_frame > 0]
+        first_frame_chars = [float(r.first_frame_chars) for r in successful if r.first_frame_chars > 0]
+        cache_ratios = [float(r.cache_ratio) for r in successful if r.cache_ratio >= 0]
         input_tokens = [float(r.qtokens) for r in successful if r.qtokens >= 0]
         output_tokens = [float(r.atokens) for r in successful if r.atokens >= 0]
 
@@ -1984,6 +2008,9 @@ class TaskService:
             "avg_token_throughput": _avg(token_throughput),
             "avg_token_per_second": _avg(token_per_second),
             "avg_token_per_second_with_calltime": _avg(token_per_second_with_calltime),
+            "avg_tokens_per_frame": _avg(tokens_per_frame),
+            "avg_first_frame_chars": _avg(first_frame_chars),
+            "avg_cache_ratio": _avg(cache_ratios),
             "avg_input_tokens": _avg(input_tokens),
             "avg_output_tokens": _avg(output_tokens),
             "total_input_tokens": sum(r.qtokens for r in records),
@@ -2095,6 +2122,9 @@ class TaskService:
                 "p95_total_time": stats.get("p95_last_resp_time", 0),
                 "avg_tps": stats.get("avg_token_per_second", 0),
                 "avg_tps_with_ttft": stats.get("avg_token_per_second_with_calltime", 0),
+                "avg_tokens_per_frame": stats.get("avg_tokens_per_frame", 0),
+                "avg_first_frame_chars": stats.get("avg_first_frame_chars", 0),
+                "avg_cache_ratio": stats.get("avg_cache_ratio", 0),
                 "avg_input_tokens": stats.get("avg_input_tokens", 0),
                 "avg_output_tokens": stats.get("avg_output_tokens", 0),
                 "total_cost": stats.get("total_cost", 0),

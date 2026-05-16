@@ -310,6 +310,9 @@ class HTMLReportExporter(Exporter):
         first_resp_times = [r.first_resp_time for r in successful if r.first_resp_time > 0]
         char_per_sec = [r.char_per_second for r in successful if r.char_per_second > 0]
         token_throughput = [r.token_throughput for r in successful if r.token_throughput > 0]
+        tokens_per_frame = [r.tokens_per_frame for r in successful if r.tokens_per_frame > 0]
+        first_frame_chars = [r.first_frame_chars for r in successful if r.first_frame_chars > 0]
+        cache_ratios = [r.cache_ratio for r in successful if r.cache_ratio >= 0]
 
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0
@@ -325,6 +328,9 @@ class HTMLReportExporter(Exporter):
             "p95_first_resp_ms": self._percentile(first_resp_times, 0.95),
             "avg_char_per_sec": avg(char_per_sec),
             "avg_token_throughput": avg(token_throughput),
+            "avg_tokens_per_frame": avg(tokens_per_frame),
+            "avg_first_frame_chars": avg(first_frame_chars),
+            "avg_cache_ratio": avg(cache_ratios),
             "total_input_tokens": sum(r.qtokens for r in records),
             "total_output_tokens": sum(r.atokens for r in records),
             "total_cached_tokens": sum(r.ctokens for r in records),
@@ -401,6 +407,18 @@ class HTMLReportExporter(Exporter):
                     <div class="stat-value">{summary['avg_token_throughput']:.1f}</div>
                     <div class="stat-label">Avg Token/sec</div>
                 </div>
+                <div class="stat-item">
+                    <div class="stat-value">{summary['avg_tokens_per_frame']:.1f}</div>
+                    <div class="stat-label">Avg TPF</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{summary['avg_first_frame_chars']:.0f}</div>
+                    <div class="stat-label">Avg FFC</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">{summary['avg_cache_ratio'] * 100:.1f}%</div>
+                    <div class="stat-label">Avg Cache Hit Rate</div>
+                </div>
             </div>
         </div>
         '''
@@ -431,6 +449,9 @@ class HTMLReportExporter(Exporter):
                 <td>{summary.get('total_requests', 0):,}</td>
                 <td>{summary.get('success_rate', 0):.1f}%</td>
                 <td>{summary.get('avg_first_resp_ms', 0):.0f}ms</td>
+                <td>{summary.get('avg_tokens_per_frame', 0):.1f}</td>
+                <td>{summary.get('avg_first_frame_chars', 0):.0f}</td>
+                <td>{summary.get('avg_cache_ratio', 0) * 100:.1f}%</td>
                 <td>{summary.get('total_cost', 0):.4f}</td>
             </tr>
             ''')
@@ -448,6 +469,9 @@ class HTMLReportExporter(Exporter):
                             <th>Requests</th>
                             <th>Success Rate</th>
                             <th>Avg First Response</th>
+                            <th>Avg TPF</th>
+                            <th>Avg FFC</th>
+                            <th>Avg Cache Hit</th>
                             <th>Cost</th>
                         </tr>
                     </thead>
@@ -491,6 +515,9 @@ class HTMLReportExporter(Exporter):
                 <td>{r.atokens:,}</td>
                 <td>{r.first_resp_time:.0f}ms</td>
                 <td>{r.char_per_second:.1f}</td>
+                <td>{r.tokens_per_frame:.1f}</td>
+                <td>{r.first_frame_chars}</td>
+                <td>{r.cache_ratio * 100:.1f}%</td>
                 <td>{r.total_cost:.4f}</td>
             </tr>
             ''')
@@ -517,6 +544,9 @@ class HTMLReportExporter(Exporter):
                             <th>Output Tokens</th>
                             <th>First Response</th>
                             <th>Char/sec</th>
+                            <th>TPF</th>
+                            <th>FFC</th>
+                            <th>Cache Hit</th>
                             <th>Cost</th>
                         </tr>
                     </thead>

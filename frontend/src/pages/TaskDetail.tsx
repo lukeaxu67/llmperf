@@ -473,6 +473,12 @@ export default function TaskDetail() {
     }
     return Number(value || 0).toFixed(precision)
   }
+  const formatExecutorPercent = (value: number, precision = 1): string => {
+    if (showingLightweightProgressOnly && (!Number.isFinite(value) || value === 0)) {
+      return '-'
+    }
+    return `${(Number(value || 0) * 100).toFixed(precision)}%`
+  }
   const formatExecutorDelta = (current: number, baselineValue?: number, reverse = false): string => {
     if (showingLightweightProgressOnly && (!current || !baselineValue)) {
       return '-'
@@ -752,6 +758,15 @@ export default function TaskDetail() {
           <Col span={4}>
             <Statistic title="平均首响" value={report?.metrics.avg_ttft || 0} precision={0} suffix="ms" />
           </Col>
+          <Col span={4}>
+            <Statistic title="TPF" value={report ? (report.metrics.avg_tokens_per_frame || 0) : '-'} precision={report ? 1 : undefined} />
+          </Col>
+          <Col span={4}>
+            <Statistic title="FFC" value={report ? (report.metrics.avg_first_frame_chars || 0) : '-'} precision={report ? 0 : undefined} />
+          </Col>
+          <Col span={4}>
+            <Statistic title="缓存命中率" value={report ? ((report.metrics.avg_cache_ratio || 0) * 100) : '-'} precision={report ? 1 : undefined} suffix={report ? '%' : undefined} />
+          </Col>
         </Row>
       </Card>
 
@@ -846,7 +861,7 @@ export default function TaskDetail() {
             size="small"
             dataSource={tableData}
             pagination={false}
-            scroll={{ x: 1520 }}
+            scroll={{ x: 1820 }}
             columns={[
               {
                 title: '执行器',
@@ -914,6 +929,9 @@ export default function TaskDetail() {
                   </Text>
                 ),
               },
+              { title: 'TPF', dataIndex: 'avg_tokens_per_frame', width: 90, render: (value: number) => formatExecutorMetric(value, 1) },
+              { title: 'FFC', dataIndex: 'avg_first_frame_chars', width: 90, render: (value: number) => formatExecutorMetric(value, 0) },
+              { title: '缓存命中率', dataIndex: 'avg_cache_ratio', width: 120, render: (value: number) => formatExecutorPercent(value, 1) },
               { title: '成本', dataIndex: 'cost', width: 110, render: (value: number) => value.toFixed(4) },
               { title: '综合分', dataIndex: 'score', width: 90 },
               {

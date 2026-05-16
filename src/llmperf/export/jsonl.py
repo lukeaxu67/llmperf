@@ -112,6 +112,9 @@ class JSONLExporter(Exporter):
                 "chars_per_second": record.char_per_second,
                 "tokens_per_second": record.token_per_second,
                 "throughput": record.token_throughput,
+                "payload_frame_count": record.payload_frame_count,
+                "tokens_per_frame": record.tokens_per_frame,
+                "first_frame_chars": record.first_frame_chars,
             },
             "content_stats": {
                 "total_chars": record.char_count,
