@@ -1003,13 +1003,22 @@ class TaskService:
         config = self._load_run_config(run_id)
         dataset_total = current_progress.dataset_total_per_executor
         effective_status = task_status or current_progress.status
-        summaries = self._storage.get_run_counts_by_executor(run_id)
-        current_progress.executors = self._build_executor_progress_from_summary(
-            config,
-            summaries,
-            effective_status,
-            dataset_total,
-        )
+        if effective_status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+            records = list(self._storage.fetch_run_records(run_id))
+            current_progress.executors = self._build_executor_progress(
+                config,
+                records,
+                effective_status,
+                dataset_total,
+            )
+        else:
+            summaries = self._storage.get_run_counts_by_executor(run_id)
+            current_progress.executors = self._build_executor_progress_from_summary(
+                config,
+                summaries,
+                effective_status,
+                dataset_total,
+            )
         current_progress.topology = self._build_topology(config, current_progress.executors)
         current_progress.last_updated_at = datetime.now()
         return current_progress

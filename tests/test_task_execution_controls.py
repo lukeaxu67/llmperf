@@ -646,6 +646,40 @@ def test_executor_resume_skips_completed_dataset_rows(tmp_path):
     assert executor.processed_ids == ["row-2"]
 
 
+def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkeypatch):
+    db_path = tmp_path / "completed-progress-metrics.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+
+    service = TaskService()
+    task_info = service.create_task(config_content=LEGACY_WEB_CONFIG)
+    run_id = task_info.run_id
+    progress = service._progress[run_id]
+    progress.dataset_total_per_executor = 1
+
+    service._storage.insert_record(
+        RunRecord(
+            run_id=run_id,
+            executor_id="mock-001",
+            dataset_row_id="row-1",
+            provider="mock",
+            model="mock-model",
+            status=200,
+            qtokens=10,
+            atokens=20,
+            action_times=[0, 100, 1100],
+            content=["ok"],
+        )
+    )
+
+    updated = service._update_progress_snapshot(run_id, task_status=TaskStatus.COMPLETED, progress=progress)
+
+    assert updated is not None
+    assert updated.executors[0]["avg_ttft"] == 100
+    assert updated.executors[0]["avg_total_time"] == 1100
+    assert updated.executors[0]["avg_token_per_second"] == 20
+    assert round(updated.executors[0]["avg_token_per_second_with_calltime"], 2) == 18.18
+
+
 def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):
     """After service restart, running tasks should be marked as failed to prevent duplicate execution."""
     db_path = tmp_path / "restore-running.sqlite"

@@ -466,6 +466,25 @@ export default function TaskDetail() {
   const tableData = executorItems.map((item) => ({ key: item.id, ...item }))
   const canRenameTask = !['running', 'paused'].includes(task.status)
   const canEditRuntimeConfig = !['running', 'paused'].includes(task.status)
+  const showingLightweightProgressOnly = isActiveTaskStatus(task.status) && !report
+  const formatExecutorMetric = (value: number, precision = 0): string => {
+    if (showingLightweightProgressOnly && (!Number.isFinite(value) || value === 0)) {
+      return '-'
+    }
+    return Number(value || 0).toFixed(precision)
+  }
+  const formatExecutorDelta = (current: number, baselineValue?: number, reverse = false): string => {
+    if (showingLightweightProgressOnly && (!current || !baselineValue)) {
+      return '-'
+    }
+    return formatDelta(current, baselineValue, reverse)
+  }
+  const metricDisplayColor = (current: number, baselineValue?: number, reverse = false): string | undefined => {
+    if (showingLightweightProgressOnly && (!current || !baselineValue)) {
+      return undefined
+    }
+    return metricColor(current, baselineValue, reverse)
+  }
 
   return (
     <div>
@@ -878,20 +897,20 @@ export default function TaskDetail() {
                 dataIndex: 'avg_ttft',
                 width: 120,
                 render: (value: number) => (
-                  <Text style={{ color: metricColor(value, baseline?.avg_ttft, true) }}>
-                    {value.toFixed(0)}
+                  <Text style={{ color: metricDisplayColor(value, baseline?.avg_ttft, true) }}>
+                    {formatExecutorMetric(value, 0)}
                   </Text>
                 ),
               },
-              { title: '尾响(ms)', dataIndex: 'avg_total_time', width: 120, render: (value: number) => value.toFixed(0) },
-              { title: 'token速率(不带首响)', dataIndex: 'avg_token_per_second', width: 160, render: (value: number) => value.toFixed(2) },
+              { title: '尾响(ms)', dataIndex: 'avg_total_time', width: 120, render: (value: number) => formatExecutorMetric(value, 0) },
+              { title: 'token速率(不带首响)', dataIndex: 'avg_token_per_second', width: 160, render: (value: number) => formatExecutorMetric(value, 2) },
               {
                 title: 'token速率(带首响)',
                 dataIndex: 'avg_token_per_second_with_calltime',
                 width: 160,
                 render: (value: number) => (
-                  <Text style={{ color: metricColor(value, baseline?.avg_token_per_second_with_calltime) }}>
-                    {value.toFixed(2)}
+                  <Text style={{ color: metricDisplayColor(value, baseline?.avg_token_per_second_with_calltime) }}>
+                    {formatExecutorMetric(value, 2)}
                   </Text>
                 ),
               },
@@ -901,14 +920,14 @@ export default function TaskDetail() {
                 title: '相对基准 TTFT',
                 key: 'delta_ttft',
                 width: 120,
-                render: (_value, record: ExecutorProgress) => formatDelta(record.avg_ttft, baseline?.avg_ttft, true),
+                render: (_value, record: ExecutorProgress) => formatExecutorDelta(record.avg_ttft, baseline?.avg_ttft, true),
               },
               {
                 title: '相对基准 TPS',
                 key: 'delta_tps',
                 width: 120,
                 render: (_value, record: ExecutorProgress) =>
-                  formatDelta(record.avg_token_per_second_with_calltime, baseline?.avg_token_per_second_with_calltime),
+                  formatExecutorDelta(record.avg_token_per_second_with_calltime, baseline?.avg_token_per_second_with_calltime),
               },
             ]}
           />
