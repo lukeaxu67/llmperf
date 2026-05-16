@@ -55,7 +55,11 @@ class StreamAccumulator:
         if self._closed:
             return
         self._closed = True
-        final_ts = max(final_ts or (self.events[-1].ts_ms if self.events else self.start_ms), self.start_ms)
+        final_ts = max(
+            final_ts or (self.events[-1].ts_ms if self.events else self.start_ms),
+            self.start_ms,
+            self.events[-1].ts_ms if self.events else self.start_ms,
+        )
         action_times = [self.start_ms]
         reasoning_times = [self.start_ms]
         content_times = [self.start_ms]
