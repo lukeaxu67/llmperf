@@ -27,7 +27,7 @@ class ProviderStreamEvent:
 class StreamAccumulator:
     record: RunRecord
     debug: Optional[bool] = None
-    merge_window_ms: int = 0
+    merge_window_ms: int = -1
     events: List[ProviderStreamEvent] = field(default_factory=list)
     start_ms: int = field(default_factory=now_ms)
     _next_seq: int = 0
