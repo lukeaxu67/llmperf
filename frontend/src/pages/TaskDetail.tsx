@@ -50,6 +50,7 @@ import { mergeTopologyProgress } from '@/utils/executorTopology'
 const { Paragraph, Text, Title } = Typography
 const PROGRESS_POLL_INTERVAL_MS = 15000
 const ERRORS_POLL_INTERVAL_MS = 60000
+const REPORT_PREFETCH_DELAY_MS = 1200
 
 function formatDelta(current: number, baseline?: number, reverse = false): string {
   if (baseline === undefined || baseline === null || baseline === 0) {
@@ -123,6 +124,8 @@ export default function TaskDetail() {
     report: 0,
     errors: 0,
   })
+  const reportPrefetchTimerRef = useRef<number | null>(null)
+  const prefetchedReportRunRef = useRef<string | null>(null)
 
   const isCanceledRequest = (error: unknown): boolean =>
     axios.isCancel(error) || (typeof error === 'object' && error !== null && (error as any).code === 'ERR_CANCELED')
@@ -201,6 +204,23 @@ export default function TaskDetail() {
     }
   }
 
+  const scheduleReportPrefetch = (runId: string, status?: string) => {
+    if (!status || isActiveTaskStatus(status)) {
+      return
+    }
+    if (prefetchedReportRunRef.current === runId) {
+      return
+    }
+    if (reportPrefetchTimerRef.current !== null) {
+      window.clearTimeout(reportPrefetchTimerRef.current)
+    }
+    reportPrefetchTimerRef.current = window.setTimeout(() => {
+      reportPrefetchTimerRef.current = null
+      prefetchedReportRunRef.current = runId
+      void loadReport(runId, true)
+    }, REPORT_PREFETCH_DELAY_MS)
+  }
+
   const loadTaskErrors = async (runId: string, silent = false) => {
     const { controller, version } = startRequest('errors')
     if (!silent) {
@@ -240,8 +260,19 @@ export default function TaskDetail() {
     setProgress(null)
     setReport(null)
     setTaskErrors([])
-    void loadTaskBundle(id)
+    prefetchedReportRunRef.current = null
+    if (reportPrefetchTimerRef.current !== null) {
+      window.clearTimeout(reportPrefetchTimerRef.current)
+      reportPrefetchTimerRef.current = null
+    }
+    void loadTaskBundle(id).then((nextTask) => {
+      scheduleReportPrefetch(id, nextTask?.status)
+    })
     return () => {
+      if (reportPrefetchTimerRef.current !== null) {
+        window.clearTimeout(reportPrefetchTimerRef.current)
+        reportPrefetchTimerRef.current = null
+      }
       requestControllersRef.current.bundle?.abort()
       requestControllersRef.current.report?.abort()
       requestControllersRef.current.errors?.abort()
@@ -260,6 +291,7 @@ export default function TaskDetail() {
       if (document.visibilityState === 'visible') {
         const nextTask = await loadTaskAndProgress(id, true)
         if (nextTask && !isActiveTaskStatus(nextTask.status)) {
+          scheduleReportPrefetch(id, nextTask.status)
           return
         }
       }
