@@ -692,6 +692,132 @@ def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkey
     assert stats["avg_cache_ratio"] == 0.2
 
 
+def test_completed_mock_task_report_uses_full_executor_metrics(tmp_path, monkeypatch):
+    db_path = tmp_path / "completed-mock-report.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+    _reset_services()
+
+    config_content = """
+info: "Mock End To End"
+dataset:
+  source:
+    type: "jsonl"
+    name: "test"
+    config:
+      path: "resource/test.jsonl"
+  iterator:
+    mutation_chain: ["identity"]
+    max_rounds: 1
+executors:
+  - id: "mock-001"
+    name: "Mock Executor"
+    type: "mock"
+    impl: "chat"
+    concurrency: 1
+    model: "mock-model"
+    param:
+      mock_ttft_ms: 10
+      mock_tokens_per_chunk: 2
+      mock_chunks: 3
+      mock_chunk_interval_ms: 5
+"""
+
+    with TestClient(create_app()) as client:
+        create_response = client.post(
+            "/api/tasks",
+            json={
+                "config_content": config_content,
+                "auto_start": True,
+            },
+        )
+        assert create_response.status_code == 200
+        run_id = create_response.json()["run_id"]
+
+        final_progress = None
+        for _ in range(100):
+            progress_response = client.get(f"/api/tasks/{run_id}/progress")
+            assert progress_response.status_code == 200
+            final_progress = progress_response.json()
+            if final_progress["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.2)
+
+        assert final_progress is not None
+        assert final_progress["status"] == "completed"
+        progress_executor = final_progress["executors"][0]
+        assert progress_executor["completed"] == 3
+        assert progress_executor["success_rate"] == 100
+        assert progress_executor["avg_input_tokens"] > 0
+        assert progress_executor["avg_output_tokens"] > 0
+        assert progress_executor["avg_ttft"] > 0
+        assert progress_executor["avg_total_time"] > 0
+        assert progress_executor["avg_token_per_second"] > 0
+        assert progress_executor["avg_token_per_second_with_calltime"] > 0
+        assert progress_executor["started_at"] > 0
+        assert progress_executor["completed_at"] >= progress_executor["started_at"]
+        assert progress_executor["conclusion"] != "Completed based on committed records."
+
+        report_response = client.get(f"/api/tasks/{run_id}/report")
+        assert report_response.status_code == 200
+        report_executor = report_response.json()["executor_summary"][0]
+        assert report_executor["completed"] == 3
+        assert report_executor["success_rate"] == 100
+        assert report_executor["avg_input_tokens"] > 0
+        assert report_executor["avg_output_tokens"] > 0
+        assert report_executor["avg_ttft"] > 0
+        assert report_executor["avg_total_time"] > 0
+        assert report_executor["avg_token_per_second"] > 0
+        assert report_executor["avg_token_per_second_with_calltime"] > 0
+        assert report_executor["started_at"] > 0
+        assert report_executor["completed_at"] >= report_executor["started_at"]
+        assert report_executor["conclusion"] != "Completed based on committed records."
+
+
+def test_get_progress_rebuilds_terminal_snapshot_even_when_active_cache_is_fresh(tmp_path, monkeypatch):
+    db_path = tmp_path / "terminal-progress-cache.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+
+    service = TaskService()
+    task_info = service.create_task(config_content=LEGACY_WEB_CONFIG)
+    run_id = task_info.run_id
+    progress = service._progress[run_id]
+    progress.status = TaskStatus.RUNNING
+    progress.dataset_total_per_executor = 1
+
+    service._storage.insert_record(
+        RunRecord(
+            run_id=run_id,
+            executor_id="mock-001",
+            dataset_row_id="row-1",
+            provider="mock",
+            model="mock-model",
+            status=200,
+            qtokens=10,
+            atokens=20,
+            action_times=[0, 100, 1100],
+            content=["first", "second"],
+            content_times=[0, 100, 600],
+        )
+    )
+
+    stale = service._update_progress_snapshot(run_id, task_status=TaskStatus.RUNNING, progress=progress)
+    assert stale is not None
+    assert stale.executors[0]["avg_ttft"] == 0
+    assert stale.executors[0]["conclusion"] == "Completed based on committed records."
+
+    task_info.status = TaskStatus.COMPLETED
+    progress.status = TaskStatus.COMPLETED
+    refreshed = service.get_progress(run_id)
+
+    assert refreshed is not None
+    assert refreshed.executors[0]["avg_ttft"] == 100
+    assert refreshed.executors[0]["avg_total_time"] == 1100
+    assert refreshed.executors[0]["avg_input_tokens"] == 10
+    assert refreshed.executors[0]["avg_output_tokens"] == 20
+    assert refreshed.executors[0]["avg_token_per_second"] > 0
+    assert refreshed.executors[0]["conclusion"] != "Completed based on committed records."
+
+
 def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):
     """After service restart, running tasks should be marked as failed to prevent duplicate execution."""
     db_path = tmp_path / "restore-running.sqlite"

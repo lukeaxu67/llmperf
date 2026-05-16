@@ -291,6 +291,8 @@ class TaskService:
 
     @staticmethod
     def _task_status_from_value(value: Any) -> TaskStatus:
+        if isinstance(value, TaskStatus):
+            return value
         try:
             return TaskStatus(str(value))
         except Exception:
@@ -1658,6 +1660,21 @@ class TaskService:
 
         progress = self._progress.get(run_id)
         if progress:
+            task_info = self._tasks.get(run_id)
+            effective_status = self._task_status_from_value(
+                task_info.status if task_info else progress.status
+            )
+            if effective_status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                progress.status = effective_status
+                updated = self._update_progress_snapshot(
+                    run_id,
+                    task_status=effective_status,
+                    progress=progress,
+                )
+                if updated:
+                    self._completed_progress_cache[run_id] = updated
+                    return self._clone_progress(updated)
+                return None
             if (
                 progress.last_updated_at is not None
                 and (datetime.now() - progress.last_updated_at).total_seconds() < self._active_progress_cache_ttl_seconds
