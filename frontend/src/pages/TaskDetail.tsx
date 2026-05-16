@@ -48,6 +48,8 @@ import {
 import { mergeTopologyProgress } from '@/utils/executorTopology'
 
 const { Paragraph, Text, Title } = Typography
+const PROGRESS_POLL_INTERVAL_MS = 15000
+const ERRORS_POLL_INTERVAL_MS = 60000
 
 function formatDelta(current: number, baseline?: number, reverse = false): string {
   if (baseline === undefined || baseline === null || baseline === 0) {
@@ -175,13 +177,16 @@ export default function TaskDetail() {
     }
   }
 
-  const loadReport = async (runId: string, silent = false) => {
+  const loadReport = async (runId: string, silent = false, refresh = false) => {
     const { controller, version } = startRequest('report')
     if (!silent) {
       setReportLoading(true)
     }
     try {
-      const nextReport = await taskApi.getReport(runId, { signal: controller.signal }) as any
+      const nextReport = await taskApi.getReport(runId, {
+        signal: controller.signal,
+        params: refresh ? { refresh: true } : undefined,
+      }) as any
       if (version === requestVersionRef.current.report) {
         setReport(nextReport as DetailedReport)
       }
@@ -259,16 +264,16 @@ export default function TaskDetail() {
       if (document.visibilityState === 'visible') {
         const nextTask = await loadTaskAndProgress(id, true)
         if (nextTask && !isActiveTaskStatus(nextTask.status)) {
-          void loadReport(id, true)
+          void loadReport(id, true, true)
         }
       }
-    }, 5000)
+    }, PROGRESS_POLL_INTERVAL_MS)
 
     const slowTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         void loadTaskErrors(id, true)
       }
-    }, 20000)
+    }, ERRORS_POLL_INTERVAL_MS)
 
     return () => {
       window.clearInterval(fastTimer)
@@ -507,7 +512,7 @@ export default function TaskDetail() {
         <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
           生成 HTML 报告
         </Button>
-        <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id)}>
+        <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id, false, true)}>
           刷新报告
         </Button>
         {canEditRuntimeConfig && (

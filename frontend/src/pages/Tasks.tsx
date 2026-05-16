@@ -36,6 +36,7 @@ import TaskProgressBar from '@/components/TaskProgressBar'
 import { taskApi, pricingApi, Task, TaskProgress } from '@/services/api'
 
 const { Title, Text } = Typography
+const ACTIVE_TASKS_POLL_INTERVAL_MS = 15000
 
 interface TaskWithCost extends Task {
   total_cost?: number
@@ -78,7 +79,7 @@ export default function Tasks() {
       } catch {
         // ignore polling errors
       }
-    }, 5000)
+    }, ACTIVE_TASKS_POLL_INTERVAL_MS)
 
     return () => clearInterval(interval)
   }, [tasks])

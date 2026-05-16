@@ -2041,7 +2041,7 @@ class TaskService:
 
         return result
 
-    def get_quick_report(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_quick_report(self, run_id: str, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         """Generate a fresh report snapshot from current run records.
 
         Args:
@@ -2055,7 +2055,13 @@ class TaskService:
             task_info
             and task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
         )
-        if terminal and run_id in self._completed_report_cache:
+        if force_refresh:
+            self._completed_report_cache.pop(run_id, None)
+            self._completed_progress_cache.pop(run_id, None)
+            self._completed_stats_cache.pop(run_id, None)
+            self._active_report_cache.pop(run_id, None)
+            self._active_stats_cache.pop(run_id, None)
+        if terminal and not force_refresh and run_id in self._completed_report_cache:
             return copy.deepcopy(self._completed_report_cache[run_id])
 
         if not terminal:

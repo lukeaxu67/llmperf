@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import copy
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -816,6 +817,58 @@ def test_get_progress_rebuilds_terminal_snapshot_even_when_active_cache_is_fresh
     assert refreshed.executors[0]["avg_output_tokens"] == 20
     assert refreshed.executors[0]["avg_token_per_second"] > 0
     assert refreshed.executors[0]["conclusion"] != "Completed based on committed records."
+
+
+def test_get_quick_report_force_refresh_rebuilds_completed_report_cache(tmp_path, monkeypatch):
+    db_path = tmp_path / "force-report-refresh.sqlite"
+    monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
+
+    service = TaskService()
+    task_info = service.create_task(config_content=LEGACY_WEB_CONFIG)
+    run_id = task_info.run_id
+    progress = service._progress[run_id]
+    progress.status = TaskStatus.RUNNING
+    progress.dataset_total_per_executor = 1
+
+    service._storage.insert_record(
+        RunRecord(
+            run_id=run_id,
+            executor_id="mock-001",
+            dataset_row_id="row-1",
+            provider="mock",
+            model="mock-model",
+            status=200,
+            qtokens=10,
+            atokens=20,
+            action_times=[0, 100, 1100],
+            content=["first", "second"],
+            content_times=[0, 100, 600],
+        )
+    )
+
+    stale = service._update_progress_snapshot(run_id, task_status=TaskStatus.RUNNING, progress=progress)
+    assert stale is not None
+    service._completed_progress_cache[run_id] = copy.deepcopy(stale)
+    service._completed_report_cache[run_id] = {
+        "run_id": run_id,
+        "executor_summary": copy.deepcopy(stale.executors),
+        "metrics": {"avg_ttft": 100},
+    }
+    task_info.status = TaskStatus.COMPLETED
+    progress.status = TaskStatus.COMPLETED
+
+    cached = service.get_quick_report(run_id)
+    assert cached is not None
+    assert cached["executor_summary"][0]["avg_ttft"] == 0
+    assert service._completed_progress_cache[run_id].executors[0]["avg_ttft"] == 0
+
+    refreshed = service.get_quick_report(run_id, force_refresh=True)
+
+    assert refreshed is not None
+    assert refreshed["metrics"]["avg_ttft"] == 100
+    assert refreshed["executor_summary"][0]["avg_ttft"] == 100
+    assert refreshed["executor_summary"][0]["avg_total_time"] == 1100
+    assert refreshed["executor_summary"][0]["conclusion"] != "Completed based on committed records."
 
 
 def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):
