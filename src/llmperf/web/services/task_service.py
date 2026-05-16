@@ -1026,22 +1026,13 @@ class TaskService:
         config = self._load_run_config(run_id)
         dataset_total = current_progress.dataset_total_per_executor
         effective_status = task_status or current_progress.status
-        if effective_status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
-            records = list(self._storage.fetch_run_records(run_id))
-            current_progress.executors = self._build_executor_progress(
-                config,
-                records,
-                effective_status,
-                dataset_total,
-            )
-        else:
-            summaries = self._storage.get_run_counts_by_executor(run_id)
-            current_progress.executors = self._build_executor_progress_from_summary(
-                config,
-                summaries,
-                effective_status,
-                dataset_total,
-            )
+        summaries = self._storage.get_run_counts_by_executor(run_id)
+        current_progress.executors = self._build_executor_progress_from_summary(
+            config,
+            summaries,
+            effective_status,
+            dataset_total,
+        )
         current_progress.topology = self._build_topology(config, current_progress.executors)
         current_progress.last_updated_at = datetime.now()
         return current_progress
@@ -2041,7 +2032,7 @@ class TaskService:
 
         return result
 
-    def get_quick_report(self, run_id: str, *, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+    def get_quick_report(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Generate a fresh report snapshot from current run records.
 
         Args:
@@ -2051,40 +2042,20 @@ class TaskService:
             Quick report dictionary, or None if no data.
         """
         task_info = self.get_task(run_id)  # Use get_task to check both memory and database
-        terminal = bool(
-            task_info
-            and task_info.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
-        )
-        if force_refresh:
-            self._completed_report_cache.pop(run_id, None)
-            self._completed_progress_cache.pop(run_id, None)
-            self._completed_stats_cache.pop(run_id, None)
-            self._active_report_cache.pop(run_id, None)
-            self._active_stats_cache.pop(run_id, None)
-        if terminal and not force_refresh and run_id in self._completed_report_cache:
-            return copy.deepcopy(self._completed_report_cache[run_id])
-
-        if not terminal:
-            counts = self._storage.get_run_counts(run_id)
-            total_count = int(counts.get("total") or 0)
-            active_cached = self._active_report_cache.get(run_id)
-            now = time.time()
-            if active_cached:
-                cached_count, cached_at, cached_report = active_cached
-                if (
-                    cached_count == total_count
-                    and now - cached_at < self._active_report_cache_ttl_seconds
-                ):
-                    return copy.deepcopy(cached_report)
+        self._completed_stats_cache.pop(run_id, None)
+        self._active_stats_cache.pop(run_id, None)
 
         stats = self.get_stats(run_id)
 
         if not stats:
             return None
 
-        progress = self.get_progress(run_id)
-        task_status = progress.status if progress else (task_info.status if task_info else TaskStatus.COMPLETED)
-        executor_summary = copy.deepcopy(progress.executors) if progress else self._get_executor_summary(run_id)
+        config = self._load_run_config(run_id)
+        task_status = task_info.status if task_info else TaskStatus.COMPLETED
+        records = list(self._storage.fetch_run_records(run_id))
+        dataset_total = self._estimate_dataset_total(config)
+        executor_summary = self._build_executor_progress(config, records, task_status, dataset_total)
+        topology = self._build_topology(config, executor_summary)
 
         # Calculate dimension scores
         latency_score = self._calculate_latency_score(stats.get("avg_first_resp_time", 0))
@@ -2157,18 +2128,10 @@ class TaskService:
             },
             "executor_summary": executor_summary,
             "cost_analysis": cost_analysis,
-            "topology": copy.deepcopy(progress.topology) if progress else {"nodes": [], "edges": [], "layers": []},
+            "topology": topology,
             "alerts": alerts,
             "recommendations": recommendations,
         }
-        if terminal:
-            self._completed_report_cache[run_id] = copy.deepcopy(report)
-        else:
-            self._active_report_cache[run_id] = (
-                int(stats.get("total_requests", 0) or 0),
-                time.time(),
-                copy.deepcopy(report),
-            )
         return report
 
     def _calculate_latency_score(self, avg_ttft_ms: float) -> int:

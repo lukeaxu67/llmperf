@@ -177,16 +177,13 @@ export default function TaskDetail() {
     }
   }
 
-  const loadReport = async (runId: string, silent = false, refresh = false) => {
+  const loadReport = async (runId: string, silent = false) => {
     const { controller, version } = startRequest('report')
     if (!silent) {
       setReportLoading(true)
     }
     try {
-      const nextReport = await taskApi.getReport(runId, {
-        signal: controller.signal,
-        params: refresh ? { refresh: true } : undefined,
-      }) as any
+      const nextReport = await taskApi.getReport(runId, { signal: controller.signal }) as any
       if (version === requestVersionRef.current.report) {
         setReport(nextReport as DetailedReport)
       }
@@ -230,11 +227,10 @@ export default function TaskDetail() {
 
   const loadTaskBundle = async (runId: string, silent = false) => {
     const nextTask = await loadTaskAndProgress(runId, silent)
-    const shouldLoadReport = nextTask ? !isActiveTaskStatus(nextTask.status) : false
     await Promise.all([
-      shouldLoadReport ? loadReport(runId, true) : Promise.resolve(),
       loadTaskErrors(runId, true),
     ])
+    return nextTask
   }
 
   useEffect(() => {
@@ -264,7 +260,7 @@ export default function TaskDetail() {
       if (document.visibilityState === 'visible') {
         const nextTask = await loadTaskAndProgress(id, true)
         if (nextTask && !isActiveTaskStatus(nextTask.status)) {
-          void loadReport(id, true, true)
+          return
         }
       }
     }, PROGRESS_POLL_INTERVAL_MS)
@@ -455,6 +451,23 @@ export default function TaskDetail() {
     () => mergeTopologyProgress(report?.topology || progress?.topology, executorItems),
     [executorItems, progress?.topology, report?.topology],
   )
+  const progressOverview = useMemo(() => {
+    const items = progress?.executors || []
+    const completed = items.reduce((sum, item) => sum + (item.completed || 0), 0)
+    const weightedInputTokens = items.reduce(
+      (sum, item) => sum + (item.avg_input_tokens || 0) * (item.completed || 0),
+      0,
+    )
+    const weightedOutputTokens = items.reduce(
+      (sum, item) => sum + (item.avg_output_tokens || 0) * (item.completed || 0),
+      0,
+    )
+    return {
+      successRate: progress?.completed ? (progress.success_count / progress.completed) * 100 : 0,
+      avgInputTokens: completed > 0 ? weightedInputTokens / completed : 0,
+      avgOutputTokens: completed > 0 ? weightedOutputTokens / completed : 0,
+    }
+  }, [progress])
 
   if (loading) {
     return (
@@ -471,7 +484,7 @@ export default function TaskDetail() {
   const tableData = executorItems.map((item) => ({ key: item.id, ...item }))
   const canRenameTask = !['running', 'paused'].includes(task.status)
   const canEditRuntimeConfig = !['running', 'paused'].includes(task.status)
-  const showingLightweightProgressOnly = isActiveTaskStatus(task.status) && !report
+  const showingLightweightProgressOnly = !report
   const formatExecutorMetric = (value: number, precision = 0): string => {
     if (showingLightweightProgressOnly && (!Number.isFinite(value) || value === 0)) {
       return '-'
@@ -512,7 +525,7 @@ export default function TaskDetail() {
         <Button icon={<FileTextOutlined />} onClick={() => handleExport('html')}>
           生成 HTML 报告
         </Button>
-        <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id, false, true)}>
+        <Button icon={<SyncOutlined />} loading={reportLoading} onClick={() => id && loadReport(id)}>
           刷新报告
         </Button>
         {canEditRuntimeConfig && (
@@ -746,31 +759,19 @@ export default function TaskDetail() {
 
         <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
           <Col span={4}>
-            <Statistic title="总请求数" value={report?.metrics.total_requests || progress?.completed || 0} />
+            <Statistic title="总请求数" value={report?.metrics.total_requests ?? progress?.completed ?? 0} />
           </Col>
           <Col span={4}>
-            <Statistic title="成功率" value={report?.metrics.success_rate || 0} precision={1} suffix="%" />
+            <Statistic title="成功率" value={report?.metrics.success_rate ?? progressOverview.successRate} precision={1} suffix="%" />
           </Col>
           <Col span={4}>
-            <Statistic title="总成本" value={report?.metrics.total_cost || progress?.current_cost || 0} precision={4} suffix={report?.metrics.currency || progress?.currency || 'CNY'} />
+            <Statistic title="总成本" value={report?.metrics.total_cost ?? progress?.current_cost ?? 0} precision={4} suffix={report?.metrics.currency || progress?.currency || 'CNY'} />
           </Col>
           <Col span={4}>
-            <Statistic title="平均输入 tokens" value={report?.metrics.avg_input_tokens || 0} precision={1} />
+            <Statistic title="平均输入 tokens" value={report?.metrics.avg_input_tokens ?? progressOverview.avgInputTokens} precision={1} />
           </Col>
           <Col span={4}>
-            <Statistic title="平均输出 tokens" value={report?.metrics.avg_output_tokens || 0} precision={1} />
-          </Col>
-          <Col span={4}>
-            <Statistic title="平均首响" value={report?.metrics.avg_ttft || 0} precision={0} suffix="ms" />
-          </Col>
-          <Col span={4}>
-            <Statistic title="TPF" value={report ? (report.metrics.avg_tokens_per_frame || 0) : '-'} precision={report ? 1 : undefined} />
-          </Col>
-          <Col span={4}>
-            <Statistic title="FFC" value={report ? (report.metrics.avg_first_frame_chars || 0) : '-'} precision={report ? 0 : undefined} />
-          </Col>
-          <Col span={4}>
-            <Statistic title="缓存命中率" value={report ? ((report.metrics.avg_cache_ratio || 0) * 100) : '-'} precision={report ? 1 : undefined} suffix={report ? '%' : undefined} />
+            <Statistic title="平均输出 tokens" value={report?.metrics.avg_output_tokens ?? progressOverview.avgOutputTokens} precision={1} />
           </Col>
         </Row>
       </Card>

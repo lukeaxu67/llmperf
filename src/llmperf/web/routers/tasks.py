@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -601,13 +601,10 @@ async def get_task_stats(run_id: str):
     response_model=QuickReportResponse,
     summary="Get quick report",
 )
-async def get_quick_report(
-    run_id: str,
-    refresh: bool = Query(False, description="Bypass completed report cache and rebuild the report"),
-):
+async def get_quick_report(run_id: str):
     """Get a quick report snapshot for a task."""
     service = get_service()
-    report = service.get_quick_report(run_id, force_refresh=refresh)
+    report = service.get_quick_report(run_id)
 
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")

@@ -647,7 +647,7 @@ def test_executor_resume_skips_completed_dataset_rows(tmp_path):
     assert executor.processed_ids == ["row-2"]
 
 
-def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkeypatch):
+def test_progress_snapshot_uses_lightweight_executor_summary(tmp_path, monkeypatch):
     db_path = tmp_path / "completed-progress-metrics.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
 
@@ -678,16 +678,23 @@ def test_completed_progress_snapshot_uses_full_executor_metrics(tmp_path, monkey
     updated = service._update_progress_snapshot(run_id, task_status=TaskStatus.COMPLETED, progress=progress)
 
     assert updated is not None
-    assert updated.executors[0]["avg_ttft"] == 100
-    assert updated.executors[0]["avg_total_time"] == 1100
-    assert updated.executors[0]["avg_token_per_second"] == 20
-    assert round(updated.executors[0]["avg_token_per_second_with_calltime"], 2) == 18.18
-    assert updated.executors[0]["avg_tokens_per_frame"] == 10
-    assert updated.executors[0]["avg_first_frame_chars"] > 0
-    assert updated.executors[0]["avg_cache_ratio"] == 0.2
+    assert updated.executors[0]["completed"] == 1
+    assert updated.executors[0]["success_rate"] == 100
+    assert updated.executors[0]["avg_input_tokens"] == 10
+    assert updated.executors[0]["avg_output_tokens"] == 20
+    assert updated.executors[0]["avg_ttft"] == 0
+    assert updated.executors[0]["avg_total_time"] == 0
+    assert updated.executors[0]["avg_token_per_second"] == 0
+    assert updated.executors[0]["avg_token_per_second_with_calltime"] == 0
+    assert updated.executors[0]["avg_tokens_per_frame"] == 0
+    assert updated.executors[0]["avg_first_frame_chars"] == 0
+    assert updated.executors[0]["avg_cache_ratio"] == 0
+    assert updated.executors[0]["conclusion"] == "Completed based on committed records."
 
     stats = service.get_stats(run_id)
     assert stats is not None
+    assert stats["avg_first_resp_time"] == 100
+    assert stats["avg_last_resp_time"] == 1100
     assert stats["avg_tokens_per_frame"] == 10
     assert stats["avg_first_frame_chars"] > 0
     assert stats["avg_cache_ratio"] == 0.2
@@ -750,13 +757,13 @@ executors:
         assert progress_executor["success_rate"] == 100
         assert progress_executor["avg_input_tokens"] > 0
         assert progress_executor["avg_output_tokens"] > 0
-        assert progress_executor["avg_ttft"] > 0
-        assert progress_executor["avg_total_time"] > 0
-        assert progress_executor["avg_token_per_second"] > 0
-        assert progress_executor["avg_token_per_second_with_calltime"] > 0
+        assert progress_executor["avg_ttft"] == 0
+        assert progress_executor["avg_total_time"] == 0
+        assert progress_executor["avg_token_per_second"] == 0
+        assert progress_executor["avg_token_per_second_with_calltime"] == 0
         assert progress_executor["started_at"] > 0
         assert progress_executor["completed_at"] >= progress_executor["started_at"]
-        assert progress_executor["conclusion"] != "Completed based on committed records."
+        assert progress_executor["conclusion"] == "Completed based on committed records."
 
         report_response = client.get(f"/api/tasks/{run_id}/report")
         assert report_response.status_code == 200
@@ -774,7 +781,7 @@ executors:
         assert report_executor["conclusion"] != "Completed based on committed records."
 
 
-def test_get_progress_rebuilds_terminal_snapshot_even_when_active_cache_is_fresh(tmp_path, monkeypatch):
+def test_get_progress_keeps_terminal_snapshot_lightweight_when_active_cache_is_fresh(tmp_path, monkeypatch):
     db_path = tmp_path / "terminal-progress-cache.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
 
@@ -811,16 +818,16 @@ def test_get_progress_rebuilds_terminal_snapshot_even_when_active_cache_is_fresh
     refreshed = service.get_progress(run_id)
 
     assert refreshed is not None
-    assert refreshed.executors[0]["avg_ttft"] == 100
-    assert refreshed.executors[0]["avg_total_time"] == 1100
     assert refreshed.executors[0]["avg_input_tokens"] == 10
     assert refreshed.executors[0]["avg_output_tokens"] == 20
-    assert refreshed.executors[0]["avg_token_per_second"] > 0
-    assert refreshed.executors[0]["conclusion"] != "Completed based on committed records."
+    assert refreshed.executors[0]["avg_ttft"] == 0
+    assert refreshed.executors[0]["avg_total_time"] == 0
+    assert refreshed.executors[0]["avg_token_per_second"] == 0
+    assert refreshed.executors[0]["conclusion"] == "Completed based on committed records."
 
 
-def test_get_quick_report_force_refresh_rebuilds_completed_report_cache(tmp_path, monkeypatch):
-    db_path = tmp_path / "force-report-refresh.sqlite"
+def test_get_quick_report_builds_full_executor_summary_independent_of_progress_cache(tmp_path, monkeypatch):
+    db_path = tmp_path / "full-report-summary.sqlite"
     monkeypatch.setenv("LLMPerf_DB_PATH", str(db_path))
 
     service = TaskService()
@@ -849,26 +856,17 @@ def test_get_quick_report_force_refresh_rebuilds_completed_report_cache(tmp_path
     stale = service._update_progress_snapshot(run_id, task_status=TaskStatus.RUNNING, progress=progress)
     assert stale is not None
     service._completed_progress_cache[run_id] = copy.deepcopy(stale)
-    service._completed_report_cache[run_id] = {
-        "run_id": run_id,
-        "executor_summary": copy.deepcopy(stale.executors),
-        "metrics": {"avg_ttft": 100},
-    }
     task_info.status = TaskStatus.COMPLETED
     progress.status = TaskStatus.COMPLETED
 
-    cached = service.get_quick_report(run_id)
-    assert cached is not None
-    assert cached["executor_summary"][0]["avg_ttft"] == 0
+    report = service.get_quick_report(run_id)
+
+    assert report is not None
+    assert report["metrics"]["avg_ttft"] == 100
+    assert report["executor_summary"][0]["avg_ttft"] == 100
+    assert report["executor_summary"][0]["avg_total_time"] == 1100
+    assert report["executor_summary"][0]["conclusion"] != "Completed based on committed records."
     assert service._completed_progress_cache[run_id].executors[0]["avg_ttft"] == 0
-
-    refreshed = service.get_quick_report(run_id, force_refresh=True)
-
-    assert refreshed is not None
-    assert refreshed["metrics"]["avg_ttft"] == 100
-    assert refreshed["executor_summary"][0]["avg_ttft"] == 100
-    assert refreshed["executor_summary"][0]["avg_total_time"] == 1100
-    assert refreshed["executor_summary"][0]["conclusion"] != "Completed based on committed records."
 
 
 def test_task_service_marks_running_tasks_as_failed_after_restart(tmp_path, monkeypatch):

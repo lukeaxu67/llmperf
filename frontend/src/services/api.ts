@@ -298,7 +298,7 @@ export const taskApi = {
   getStats: (runId: string) =>
     api.get<TaskStats>(`/tasks/${runId}/stats`),
 
-  getReport: (runId: string, config?: AxiosRequestConfig & { params?: { refresh?: boolean } }) =>
+  getReport: (runId: string, config?: AxiosRequestConfig) =>
     api.get(`/tasks/${runId}/report`, config),
 
   getErrors: (
