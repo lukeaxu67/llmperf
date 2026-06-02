@@ -312,10 +312,10 @@ class HTMLReportExporter(Exporter):
         token_throughput = [r.token_throughput for r in successful if r.token_throughput > 0]
         tokens_per_frame = [r.tokens_per_frame for r in successful if r.tokens_per_frame > 0]
         first_frame_chars = [r.first_frame_chars for r in successful if r.first_frame_chars > 0]
-        cache_ratios = [r.cache_ratio for r in successful if r.cache_ratio >= 0]
-
         def avg(lst):
             return sum(lst) / len(lst) if lst else 0
+
+        total_prompt_tokens = sum(r.qtokens for r in successful)
 
         return {
             "total_requests": total,
@@ -330,7 +330,7 @@ class HTMLReportExporter(Exporter):
             "avg_token_throughput": avg(token_throughput),
             "avg_tokens_per_frame": avg(tokens_per_frame),
             "avg_first_frame_chars": avg(first_frame_chars),
-            "avg_cache_ratio": avg(cache_ratios),
+            "avg_cache_ratio": sum(r.ctokens for r in successful) / total_prompt_tokens if total_prompt_tokens > 0 else 0.0,
             "total_input_tokens": sum(r.qtokens for r in records),
             "total_output_tokens": sum(r.atokens for r in records),
             "total_cached_tokens": sum(r.ctokens for r in records),

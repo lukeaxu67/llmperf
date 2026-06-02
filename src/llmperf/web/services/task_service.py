@@ -764,12 +764,6 @@ class TaskService:
                 for record in success_records
                 if record.first_frame_chars > 0
             ]
-            cache_ratios = [
-                float(record.cache_ratio)
-                for record in success_records
-                if record.cache_ratio >= 0
-            ]
-
             completed = len(executor_records)
             total = dataset_total
             success_count = len(success_records)
@@ -841,7 +835,12 @@ class TaskService:
                     "avg_token_per_second_with_calltime": _avg(tps_with_ttft),
                     "avg_tokens_per_frame": _avg(tokens_per_frame),
                     "avg_first_frame_chars": _avg(first_frame_chars),
-                    "avg_cache_ratio": _avg(cache_ratios),
+                    "avg_cache_ratio": (
+                        sum(r.ctokens for r in success_records)
+                        / sum(r.qtokens for r in success_records)
+                        if sum(r.qtokens for r in success_records) > 0
+                        else 0.0
+                    ),
                     "cost": sum(record.total_cost for record in executor_records),
                     "avg_cost_per_request": (sum(record.total_cost for record in executor_records) / completed) if completed else 0.0,
                     "score": score,
@@ -1995,7 +1994,6 @@ class TaskService:
         ]
         tokens_per_frame = [float(r.tokens_per_frame) for r in successful if r.tokens_per_frame > 0]
         first_frame_chars = [float(r.first_frame_chars) for r in successful if r.first_frame_chars > 0]
-        cache_ratios = [float(r.cache_ratio) for r in successful if r.cache_ratio >= 0]
         input_tokens = [float(r.qtokens) for r in successful if r.qtokens >= 0]
         output_tokens = [float(r.atokens) for r in successful if r.atokens >= 0]
 
@@ -2018,7 +2016,11 @@ class TaskService:
             "avg_token_per_second_with_calltime": _avg(token_per_second_with_calltime),
             "avg_tokens_per_frame": _avg(tokens_per_frame),
             "avg_first_frame_chars": _avg(first_frame_chars),
-            "avg_cache_ratio": _avg(cache_ratios),
+            "avg_cache_ratio": (
+                sum(r.ctokens for r in successful) / sum(r.qtokens for r in successful)
+                if sum(r.qtokens for r in successful) > 0
+                else 0.0
+            ),
             "avg_input_tokens": _avg(input_tokens),
             "avg_output_tokens": _avg(output_tokens),
             "total_input_tokens": sum(r.qtokens for r in records),
